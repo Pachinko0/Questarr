@@ -21,6 +21,7 @@ import {
   insertReleaseBlacklistSchema,
   insertGameFileSchema,
   claimDownloadRequestSchema,
+  type InsertGameFile,
   type Config,
   type Game,
   type Indexer,
@@ -104,6 +105,7 @@ import { importRouter } from "./routes/import.js";
 import { importTasksRouter } from "./routes/import-tasks.js";
 import { systemRouter } from "./routes/system.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
+import { importManager } from "./services/index.js";
 
 // Cache-Control header values for IGDB discovery endpoints
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
@@ -1789,7 +1791,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // Get game files for a specific game, grouped by category
+  // Get game content from IGDB and local files
   app.get(
     "/api/games/:gameId/content",
     authenticateToken,
@@ -1802,27 +1804,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!game) return;
 
         const gameFiles = await storage.getGameFiles(gameId);
+        const userGames = await storage.getUserGames(userId);
 
-        const CATEGORIES = [
-          { category: "main", label: "Main Game" },
-          { category: "dlc", label: "DLC & Expansions" },
-          { category: "update", label: "Updates & Patches" },
-          { category: "extra", label: "Extras" },
-        ] as const;
-
-        const slots = CATEGORIES.map(({ category, label }) => {
-          const files = gameFiles
-            .filter((f) => f.category === category)
-            .map((f) => ({
+        // Base game slot
+        const baseFiles = gameFiles.filter((f) => f.category === "main");
+        const slots: Array<{
+          category: string;
+          label: string;
+          present: boolean;
+          files: Array<{
+            id: string;
+            originalName: string;
+            storedName: string;
+            downloadId: string | null;
+            fileSize: number | null;
+            createdAt: number | null;
+          }>;
+          igdbId?: number;
+          coverUrl?: string | null;
+          gameId?: string;
+        }> = [
+          {
+            category: "main",
+            label: game.title,
+            present: baseFiles.length > 0,
+            files: baseFiles.map((f) => ({
               id: f.id,
               originalName: f.originalName,
               storedName: f.storedName,
               downloadId: f.downloadId,
               fileSize: f.fileSize,
-              createdAt: f.createdAt,
-            }));
-          return { category, label, present: files.length > 0, files };
-        });
+              createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+            })),
+          },
+        ];
+
+        // Fetch IGDB expansions
+        if (game.igdbId) {
+          try {
+            const igdbGame = await igdbClient.getGameById(game.igdbId);
+            if (igdbGame?.expansions) {
+              for (const exp of igdbGame.expansions) {
+                const existingGame = userGames.find((g) => g.igdbId === exp.id);
+                const expFiles = gameFiles.filter(
+                  (f) => f.category === "dlc" || f.category === "update"
+                );
+                slots.push({
+                  category: exp.category === 1 ? "dlc" : "update",
+                  label: exp.name,
+                  present: !!existingGame || expFiles.length > 0,
+                  files: expFiles.map((f) => ({
+                    id: f.id,
+                    originalName: f.originalName,
+                    storedName: f.storedName,
+                    downloadId: f.downloadId,
+                    fileSize: f.fileSize,
+                    createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+                  })),
+                  igdbId: exp.id,
+                  coverUrl: exp.cover?.url ?? null,
+                  gameId: existingGame?.id,
+                });
+              }
+            }
+          } catch {
+            // IGDB unavailable, fall back to file-based slots
+          }
+        }
+
+        // Add file-only categories not already covered by IGDB expansions
+        const coveredCategories = new Set(slots.map((s) => s.category));
+        const fileCategories = ["dlc", "update", "extra"] as const;
+        const categoryLabels: Record<string, string> = {
+          dlc: "DLC & Expansions",
+          update: "Updates & Patches",
+          extra: "Extras",
+        };
+        for (const cat of fileCategories) {
+          if (coveredCategories.has(cat)) continue;
+          const files = gameFiles.filter((f) => f.category === cat);
+          if (files.length > 0) {
+            slots.push({
+              category: cat,
+              label: categoryLabels[cat],
+              present: true,
+              files: files.map((f) => ({
+                id: f.id,
+                originalName: f.originalName,
+                storedName: f.storedName,
+                downloadId: f.downloadId,
+                fileSize: f.fileSize,
+                createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+              })),
+            });
+          }
+        }
 
         res.json({ slots });
       } catch (error) {
@@ -1910,6 +1986,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         routesLogger.error({ error }, "error deleting game files");
         res.status(500).json({ error: "Failed to delete game files" });
+      }
+    }
+  );
+
+  // Backfill game_files for games imported before the game_files table existed
+  app.post(
+    "/api/games/backfill-game-files",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = req.user!.id;
+        const games = await storage.getUserGames(userId, true);
+        const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
+        let totalFiles = 0;
+        let processedGames = 0;
+
+        for (const game of games) {
+          const existing = await storage.getGameFiles(game.id);
+          if (existing.length > 0) continue;
+
+          if (!game.libraryPath) continue;
+
+          const gameDir = path.resolve(game.libraryPath);
+          let entries: string[];
+          try {
+            entries = await fs.promises.readdir(gameDir);
+          } catch {
+            continue;
+          }
+
+          const files: Array<{
+            name: string;
+            category: "main" | "dlc" | "update" | "extra";
+            filePath: string;
+          }> = [];
+
+          for (const entry of entries) {
+            const fullPath = path.join(gameDir, entry);
+            let stat: fs.Stats;
+            try {
+              stat = await fs.promises.stat(fullPath);
+            } catch {
+              continue;
+            }
+
+            const lowerName = entry.toLowerCase();
+            if (stat.isDirectory() && CATEGORY_SUBDIRS.has(lowerName)) {
+              let subEntries: string[];
+              try {
+                subEntries = await fs.promises.readdir(fullPath);
+              } catch {
+                continue;
+              }
+              for (const sub of subEntries) {
+                const subFullPath = path.join(fullPath, sub);
+                try {
+                  await fs.promises.stat(subFullPath);
+                  files.push({
+                    name: sub,
+                    category: lowerName as "dlc" | "update" | "extra",
+                    filePath: subFullPath,
+                  });
+                } catch {
+                  continue;
+                }
+              }
+            } else if (!stat.isDirectory()) {
+              const nameWithoutExt = path.parse(entry).name;
+              const { category } = categorizeDownload(nameWithoutExt);
+              files.push({
+                name: entry,
+                category: category as "main" | "dlc" | "update" | "extra",
+                filePath: fullPath,
+              });
+            }
+          }
+
+          if (files.length > 0) {
+            const gameFiles: InsertGameFile[] = await Promise.all(
+              files.map(async (f) => {
+                let fileSize: number | null = null;
+                try {
+                  const fStat = await fs.promises.stat(f.filePath);
+                  fileSize = fStat.size;
+                } catch {
+                  // ignore
+                }
+                return {
+                  gameId: game.id,
+                  downloadId: null,
+                  originalName: f.name,
+                  storedName: f.name,
+                  category: f.category,
+                  filePath: f.filePath,
+                  fileSize,
+                };
+              })
+            );
+            await storage.addGameFilesBatch(gameFiles);
+            totalFiles += gameFiles.length;
+            processedGames++;
+          }
+        }
+
+        routesLogger.info({ processedGames, totalFiles }, "Game files backfill complete");
+        res.json({ success: true, processedGames, totalFiles });
+      } catch (error) {
+        routesLogger.error({ error }, "error backfilling game files");
+        res.status(500).json({ error: "Failed to backfill game files" });
       }
     }
   );
@@ -3044,7 +3229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Downloader not found" });
       }
 
-      await storage.addGameDownload(
+      const gameDownload = await storage.addGameDownload(
         insertGameDownloadSchema.parse({
           gameId: resolvedGameId!,
           downloaderId,
@@ -3057,6 +3242,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Clear stale "search results available" flag now that the game has a linked download
       await storage.updateGameSearchResultsAvailable(resolvedGameId, false);
+
+      // Auto-import if the download is already complete
+      if (downloadStatus === "completed" && gameDownload) {
+        try {
+          const details = await DownloaderManager.getDownloadDetails(downloader, downloadHash);
+          if (details?.downloadDir) {
+            const remotePath = `${details.downloadDir}/${details.name}`;
+            await importManager.processImport(gameDownload.id, remotePath);
+          }
+        } catch (importErr) {
+          routesLogger.warn(
+            { error: importErr, downloadId: gameDownload?.id },
+            "Auto-import failed for claimed download — files may need manual import"
+          );
+        }
+      }
 
       res.json({ success: true, gameId: resolvedGameId });
     } catch (error) {

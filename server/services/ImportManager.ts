@@ -410,15 +410,30 @@ export class ImportManager {
 
       if (plan.fileCategories && plan.fileCategories.length > 0) {
         const gameDir = result.destDir;
-        const files: InsertGameFile[] = plan.fileCategories.map((fc) => ({
-          gameId: game.id,
-          downloadId: downloadId,
-          originalName: fc.name,
-          storedName: fc.name,
-          category: fc.category,
-          filePath: path.join(gameDir, fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`),
-          fileSize: 0,
-        }));
+        const files: InsertGameFile[] = await Promise.all(
+          plan.fileCategories.map(async (fc) => {
+            const filePath = path.join(
+              gameDir,
+              fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`
+            );
+            let fileSize: number | null = null;
+            try {
+              const stat = await fs.stat(filePath);
+              fileSize = stat.size;
+            } catch {
+              // file may not exist yet
+            }
+            return {
+              gameId: game.id,
+              downloadId: downloadId,
+              originalName: fc.name,
+              storedName: fc.name,
+              category: fc.category,
+              filePath,
+              fileSize,
+            };
+          })
+        );
         await this.storage.addGameFilesBatch(files);
       }
 
@@ -603,15 +618,30 @@ export class ImportManager {
 
       if (overridePlan.fileCategories && overridePlan.fileCategories.length > 0) {
         const gameDir = result.destDir;
-        const files: InsertGameFile[] = overridePlan.fileCategories.map((fc) => ({
-          gameId: game.id,
-          downloadId: downloadId,
-          originalName: fc.name,
-          storedName: fc.name,
-          category: fc.category,
-          filePath: path.join(gameDir, fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`),
-          fileSize: 0,
-        }));
+        const files: InsertGameFile[] = await Promise.all(
+          overridePlan.fileCategories.map(async (fc) => {
+            const filePath = path.join(
+              gameDir,
+              fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`
+            );
+            let fileSize: number | null = null;
+            try {
+              const stat = await fs.stat(filePath);
+              fileSize = stat.size;
+            } catch {
+              // file may not exist yet
+            }
+            return {
+              gameId: game.id,
+              downloadId: downloadId,
+              originalName: fc.name,
+              storedName: fc.name,
+              category: fc.category,
+              filePath,
+              fileSize,
+            };
+          })
+        );
         await this.storage.addGameFilesBatch(files);
       }
     } catch (err) {

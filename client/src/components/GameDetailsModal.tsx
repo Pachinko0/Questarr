@@ -62,8 +62,6 @@ import {
   Info,
   Image,
   Link,
-  File,
-  Folder,
   ChevronLeft,
   ChevronRight,
   Upload,
@@ -95,7 +93,7 @@ type ContentSlotFile = {
   id: string;
   originalName: string;
   storedName: string;
-  downloadId: string;
+  downloadId: string | null;
   fileSize: number | null;
   createdAt: number | null;
 };
@@ -105,6 +103,9 @@ type ContentSlot = {
   label: string;
   present: boolean;
   files: ContentSlotFile[];
+  igdbId?: number;
+  coverUrl?: string | null;
+  gameId?: string;
 };
 
 interface GameDetailsModalProps {
@@ -634,14 +635,14 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [scanResults, setScanResults] = useState<
     Array<{ name: string; path: string; category: string; isDirectory: boolean }>
   >([]);
-  const [importDialogSlot, setImportDialogSlot] = useState<string | null>(null);
+  const [scanningDisk, setScanningDisk] = useState(false);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
   const [deleteConfirmFileId, setDeleteConfirmFileId] = useState<string | null>(null);
 
-  const { data: contentData, isLoading: contentLoading } = useQuery<{
+  const { data: contentData, isLoading: contentLoading, refetch: refetchContent } = useQuery<{
     slots: ContentSlot[];
   }>({
     queryKey: [`/api/games/${game?.id}/content`],
@@ -1278,19 +1279,53 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                     <Card key={slot.category} className="bg-card/60">
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-sm font-semibold">{slot.label}</h4>
-                          {slot.present ? (
-                            <Badge variant="secondary" className="text-xs">
-                              {slot.files.length} file{slot.files.length !== 1 ? "s" : ""}
-                            </Badge>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="text-xs bg-amber-600/20 text-amber-400 border-amber-600/30"
-                            >
-                              Missing
-                            </Badge>
-                          )}
+                          <div className="flex items-center gap-3 min-w-0">
+                            {slot.coverUrl && (
+                              <img
+                                src={slot.coverUrl
+                                  .replace("t_thumb", "t_cover_small")
+                                  .startsWith("//")
+                                  ? `https:${slot.coverUrl.replace("t_thumb", "t_cover_small")}`
+                                  : slot.coverUrl.replace("t_thumb", "t_cover_small")}
+                                alt={slot.label}
+                                className="h-10 w-8 rounded object-cover shrink-0"
+                              />
+                            )}
+                            <h4 className="text-sm font-semibold truncate">{slot.label}</h4>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {slot.igdbId != null && slot.gameId != null && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                    onClick={async () => {
+                                      if (!confirm("Remove this expansion from your collection?")) return;
+                                      await apiRequest("DELETE", `/api/games/${slot.gameId}`);
+                                      refetchContent();
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Remove from collection</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {slot.present ? (
+                              <Badge variant="secondary" className="text-xs shrink-0">
+                                {slot.files.length} file{slot.files.length !== 1 ? "s" : ""}
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-amber-600/20 text-amber-400 border-amber-600/30 shrink-0"
+                              >
+                                Missing
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                         {slot.present ? (
                           <div className="space-y-1.5">
@@ -1337,13 +1372,30 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                   variant="outline"
                                   size="sm"
                                   className="h-8 gap-1.5"
-                                  onClick={() => setDownloadOpen(true)}
+                                  onClick={async () => {
+                                    if (slot.igdbId) {
+                                      try {
+                                        await apiRequest("POST", "/api/games/match-and-add", {
+                                          title: slot.label,
+                                        });
+                                        refetchContent();
+                                      } catch {
+                                        // already in collection or error
+                                      }
+                                    } else {
+                                      setDownloadOpen(true);
+                                    }
+                                  }}
                                 >
                                   <Search className="h-3.5 w-3.5" />
                                   Search
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>Search indexers for this game</TooltipContent>
+                              <TooltipContent>
+                                {slot.igdbId
+                                  ? "Add this expansion to your collection"
+                                  : "Search indexers for this game"}
+                              </TooltipContent>
                             </Tooltip>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -1373,8 +1425,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                       variant="secondary"
                       size="sm"
                       className="gap-2"
+                      disabled={scanningDisk}
                       onClick={async () => {
                         if (!game) return;
+                        setScanningDisk(true);
+                        setScanResults([]);
                         try {
                           const res = await apiRequest(
                             "GET",
@@ -1388,16 +1443,24 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             isDirectory: boolean;
                           }>;
                           setScanResults(scanned);
+                          toast({
+                            description:
+                              scanned.length === 0
+                                ? "No files found on disk"
+                                : `Found ${scanned.length} file${scanned.length !== 1 ? "s" : ""} on disk`,
+                          });
                         } catch {
                           toast({
                             description: "Failed to scan game folder",
                             variant: "destructive",
                           });
+                        } finally {
+                          setScanningDisk(false);
                         }
                       }}
                     >
-                      <Scan className="h-4 w-4" />
-                      Scan Disk
+                      <Scan className={`h-4 w-4 ${scanningDisk ? "animate-spin" : ""}`} />
+                      {scanningDisk ? "Scanning…" : "Scan Disk"}
                     </Button>
                   </div>
                   {/* Scan results */}
