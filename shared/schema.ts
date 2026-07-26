@@ -827,7 +827,6 @@ export const gameFiles = sqliteTable(
       .notNull()
       .references(() => games.id, { onDelete: "cascade" }),
     downloadId: text("download_id")
-      .notNull()
       .references(() => gameDownloads.id, { onDelete: "set null" }),
     originalName: text("original_name").notNull(),
     storedName: text("stored_name").notNull(),

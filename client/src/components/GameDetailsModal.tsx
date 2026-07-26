@@ -639,6 +639,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
+  const [deleteConfirmFileId, setDeleteConfirmFileId] = useState<string | null>(null);
 
   const { data: contentData, isLoading: contentLoading } = useQuery<{
     slots: ContentSlot[];
@@ -675,7 +676,6 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     }) => {
       const res = await apiRequest("POST", `/api/game-files`, {
         gameId: data.gameId,
-        downloadId: "",
         originalName: data.originalName,
         storedName: data.storedName,
         category: data.category,
@@ -1319,7 +1319,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                       size="icon"
                                       className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
                                       disabled={deleteGameFileMutation.isPending}
-                                      onClick={() => deleteGameFileMutation.mutate(file.id)}
+                                      onClick={() => setDeleteConfirmFileId(file.id)}
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
@@ -1381,7 +1381,13 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             `/api/games/${game.id}/files`
                           );
                           const data = await res.json();
-                          setScanResults(data.files ?? []);
+                          const scanned = (data.files ?? []) as Array<{
+                            name: string;
+                            path: string;
+                            category: string;
+                            isDirectory: boolean;
+                          }>;
+                          setScanResults(scanned);
                         } catch {
                           toast({
                             description: "Failed to scan game folder",
@@ -1402,77 +1408,79 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                           <Scan className="h-4 w-4 text-amber-400" />
                           Files found on disk
                         </h4>
-                        {scanResults.map((file, idx) => {
-                          const alreadyInDb = contentData?.slots?.some((s) =>
-                            s.files.some(
-                              (f) =>
-                                f.originalName === file.name ||
-                                f.storedName === file.name
-                            )
+                        {(() => {
+                          const trackedPaths = new Set<string>();
+                          for (const slot of contentData?.slots ?? []) {
+                            for (const f of slot.files) {
+                              trackedPaths.add(f.storedName);
+                              trackedPaths.add(f.originalName);
+                            }
+                          }
+                          const untracked = scanResults.filter(
+                            (f) => !trackedPaths.has(f.name) && !trackedPaths.has(f.path)
                           );
-                          if (alreadyInDb) return null;
-                          return (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
-                            >
-                              <div className="flex-1 min-w-0">
-                                <p className="truncate">{file.name}</p>
-                                <p className="text-xs text-muted-foreground truncate">
-                                  {file.path}
-                                </p>
+                          return untracked.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-2">
+                              All files on disk are already tracked.
+                            </p>
+                          ) : (
+                            untracked.map((file, i) => (
+                              <div
+                                key={`${file.path}-${i}`}
+                                className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="truncate">{file.name}</p>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {file.path}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <select
+                                    className="h-7 rounded border border-input bg-background px-2 text-xs"
+                                    value={file.category}
+                                    onChange={(e) =>
+                                      setScanResults((prev) =>
+                                        prev.map((f) =>
+                                          f.path === file.path
+                                            ? { ...f, category: e.target.value }
+                                            : f
+                                        )
+                                      )
+                                    }
+                                    aria-label="Category"
+                                  >
+                                    <option value="main">Main</option>
+                                    <option value="dlc">DLC</option>
+                                    <option value="update">Update</option>
+                                    <option value="extra">Extra</option>
+                                  </select>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
+                                    disabled={addGameFileMutation.isPending}
+                                    onClick={() => {
+                                      addGameFileMutation.mutate({
+                                        gameId: game!.id,
+                                        originalName: file.name,
+                                        storedName: file.name,
+                                        category: file.category,
+                                        filePath: file.path,
+                                        fileSize: null,
+                                      });
+                                      setScanResults((prev) =>
+                                        prev.filter((f) => f.path !== file.path)
+                                      );
+                                    }}
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
                               </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <select
-                                  className="h-7 rounded border border-input bg-background px-2 text-xs"
-                                  value={file.category}
-                                  onChange={() => {}}
-                                  aria-label="Category"
-                                >
-                                  <option value="main">Main</option>
-                                  <option value="dlc">DLC</option>
-                                  <option value="update">Update</option>
-                                  <option value="extra">Extra</option>
-                                </select>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
-                                  disabled={addGameFileMutation.isPending}
-                                  onClick={() => {
-                                    addGameFileMutation.mutate({
-                                      gameId: game!.id,
-                                      originalName: file.name,
-                                      storedName: file.name,
-                                      category: file.category,
-                                      filePath: file.path,
-                                      fileSize: null,
-                                    });
-                                    setScanResults((prev) =>
-                                      prev.filter((_, i) => i !== idx)
-                                    );
-                                  }}
-                                >
-                                  <Upload className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </div>
+                            ))
                           );
-                        })}
-                        {scanResults.filter((file) => {
-                          const alreadyInDb = contentData?.slots?.some((s) =>
-                            s.files.some(
-                              (f) =>
-                                f.originalName === file.name ||
-                                f.storedName === file.name
-                            )
-                          );
-                          return !alreadyInDb;
-                        }).length === 0 && (
-                          <p className="text-xs text-muted-foreground text-center py-2">
-                            All files on disk are already tracked.
-                          </p>
-                        )}
+                        })()}
                       </CardContent>
                     </Card>
                   )}
@@ -1933,6 +1941,33 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deleteConfirmFileId} onOpenChange={(o) => !o && setDeleteConfirmFileId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this file?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the file from disk. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteConfirmFileId(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (deleteConfirmFileId) {
+                  deleteGameFileMutation.mutate(deleteConfirmFileId);
+                  setDeleteConfirmFileId(null);
+                }
+              }}
+            >
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

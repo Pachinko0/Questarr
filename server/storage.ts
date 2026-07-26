@@ -299,6 +299,7 @@ export interface IStorage {
   deleteImportTasksOlderThan(cutoffMs: number): Promise<number>;
 
   // GameFile methods
+  getGameFile(id: string): Promise<GameFile | undefined>;
   getGameFiles(gameId: string): Promise<GameFile[]>;
   getGameFilesByDownload(downloadId: string): Promise<GameFile[]>;
   addGameFile(file: InsertGameFile): Promise<GameFile>;
@@ -1297,6 +1298,10 @@ export class MemStorage implements IStorage {
   }
 
   // GameFile methods
+  async getGameFile(id: string): Promise<GameFile | undefined> {
+    return this.gameFiles.get(id);
+  }
+
   async getGameFiles(gameId: string): Promise<GameFile[]> {
     return Array.from(this.gameFiles.values()).filter((f) => f.gameId === gameId);
   }
@@ -1307,7 +1312,17 @@ export class MemStorage implements IStorage {
 
   async addGameFile(file: InsertGameFile): Promise<GameFile> {
     const id = randomUUID();
-    const gf: GameFile = { ...file, id, category: file.category as GameFile["category"], fileSize: file.fileSize ?? null, createdAt: new Date() };
+    const gf: GameFile = {
+      id,
+      gameId: file.gameId,
+      downloadId: file.downloadId ?? null,
+      originalName: file.originalName,
+      storedName: file.storedName,
+      category: file.category as GameFile["category"],
+      filePath: file.filePath,
+      fileSize: file.fileSize ?? null,
+      createdAt: new Date(),
+    };
     this.gameFiles.set(id, gf);
     return gf;
   }
@@ -2407,6 +2422,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // GameFile methods
+  async getGameFile(id: string): Promise<GameFile | undefined> {
+    const [file] = await db.select().from(gameFiles).where(eq(gameFiles.id, id));
+    return file;
+  }
+
   async getGameFiles(gameId: string): Promise<GameFile[]> {
     return db.select().from(gameFiles).where(eq(gameFiles.gameId, gameId));
   }

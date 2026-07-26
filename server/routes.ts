@@ -1874,14 +1874,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
+        const file = await storage.getGameFile(id);
+        if (!file) {
+          return res.status(404).json({ error: "Game file not found" });
+        }
+        try {
+          await fs.promises.unlink(file.filePath);
+        } catch {
+          // File may already be missing from disk — still remove the record
+        }
         const deleted = await storage.removeGameFile(id);
         if (!deleted) {
-          return res.status(404).json({ error: "Game file not found" });
+          return res.status(500).json({ error: "Failed to remove game file record" });
         }
         res.json({ success: true });
       } catch (error) {
         routesLogger.error({ error }, "error deleting game file");
         res.status(500).json({ error: "Failed to delete game file" });
+      }
+    }
+  );
+
+  // Delete all game files for a game
+  app.delete(
+    "/api/game-files/game/:gameId",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const { gameId } = req.params;
+        const userId = req.user!.id;
+        const game = await resolveOwnedGame(gameId, userId, res);
+        if (!game) return;
+        const count = await storage.removeGameFilesByGameId(gameId);
+        res.json({ success: true, deleted: count });
+      } catch (error) {
+        routesLogger.error({ error }, "error deleting game files");
+        res.status(500).json({ error: "Failed to delete game files" });
       }
     }
   );
