@@ -291,6 +291,23 @@ export default function ImportSettings() {
                           }
                         />
                       </div>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Sort extras into subfolders</Label>
+                          <p className="text-xs text-muted-foreground">
+                            When a download contains multiple files, sort DLC, patches, and extras
+                            into <code>dlc/</code>, <code>patch/</code>, and <code>extra/</code>{" "}
+                            subdirectories inside the game folder. Compatible with ROM&#39;s folder
+                            conventions.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={localConfig.sortExtras}
+                          onCheckedChange={(c) =>
+                            setLocalConfig({ ...localConfig, sortExtras: c })
+                          }
+                        />
+                      </div>
                     </div>
 
                     <Separator className="mb-6" />

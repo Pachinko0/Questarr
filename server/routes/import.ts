@@ -44,6 +44,7 @@ const importConfigPatchSchema = z
     minFileSize: z.number().int().min(0).optional(),
     libraryRoot: z.string().min(1).max(1024).optional(),
     autoDeleteAfterImport: z.boolean().optional(),
+    sortExtras: z.boolean().optional(),
   })
   .strict();
 
@@ -328,6 +329,7 @@ importRouter.patch("/config", async (req, res) => {
       ignoredExtensions: newConfig.ignoredExtensions,
       minFileSize: newConfig.minFileSize,
       libraryRoot: newConfig.libraryRoot,
+      sortExtras: newConfig.sortExtras,
     };
 
     const existing = await storage.getUserSettings(userId);
@@ -483,6 +485,14 @@ importRouter.post("/:id/confirm", async (req, res) => {
       originalPath: z.string().optional(),
       transferMode: z.enum(IMPORT_TRANSFER_MODES).optional(),
       unpack: z.boolean().optional(),
+      fileCategories: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            category: z.enum(["main", "dlc", "update", "extra"]),
+          })
+        )
+        .optional(),
     });
 
     const body = schema.parse(req.body);
@@ -500,6 +510,7 @@ importRouter.post("/:id/confirm", async (req, res) => {
         reviewReason: "Manual Confirmation",
         transferMode: body.transferMode,
         unpack: body.unpack,
+        fileCategories: body.fileCategories,
       },
       userId
     );

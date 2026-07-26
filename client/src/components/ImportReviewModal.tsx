@@ -56,6 +56,7 @@ export default function ImportReviewModal({
   const [unpackArchive, setUnpackArchive] = useState(false);
   const [isSourceBrowserOpen, setIsSourceBrowserOpen] = useState(false);
   const [isDestBrowserOpen, setIsDestBrowserOpen] = useState(false);
+  const [fileCategories, setFileCategories] = useState<Record<string, string>>({});
 
   const planApplied = useRef(false);
 
@@ -63,10 +64,12 @@ export default function ImportReviewModal({
     ? `/api/imports/${downloadId}/plan?sourcePath=${encodeURIComponent(sourcePath)}`
     : `/api/imports/${downloadId}/plan`;
 
+  type PlanFile = { name: string; isArchive: boolean; category?: string };
+
   const { data: planData } = useQuery<{
     originalPath: string;
     proposedPath: string;
-    files: Array<{ name: string; isArchive: boolean }>;
+    files: Array<PlanFile>;
     hasArchive: boolean;
     totalCount: number;
   }>({
@@ -88,12 +91,17 @@ export default function ImportReviewModal({
     }
   }, [open, downloadId, importConfig?.libraryRoot, importConfig?.transferMode]);
 
-  // Pre-fill paths from plan once when it loads
+  // Pre-fill paths and file categories from plan once when it loads
   useEffect(() => {
     if (open && planData && !planApplied.current) {
       planApplied.current = true;
       if (planData.originalPath) setSourcePath(planData.originalPath);
       if (planData.proposedPath) setDestinationPath(planData.proposedPath);
+      const cats: Record<string, string> = {};
+      for (const f of planData.files) {
+        if (f.category) cats[f.name] = f.category;
+      }
+      if (Object.keys(cats).length > 0) setFileCategories(cats);
     }
   }, [open, planData]);
 
@@ -113,12 +121,17 @@ export default function ImportReviewModal({
 
   const confirmMutation = useMutation({
     mutationFn: async () => {
+      const fileCatEntries = Object.keys(fileCategories).map((name) => ({
+        name,
+        category: fileCategories[name],
+      }));
       await apiRequest("POST", `/api/imports/${downloadId}/confirm`, {
         strategy,
         proposedPath: destinationPath,
         ...(sourcePath ? { originalPath: sourcePath } : {}),
         transferMode,
         unpack: unpackArchive,
+        ...(fileCatEntries.length > 0 ? { fileCategories: fileCatEntries } : {}),
       });
     },
     onSuccess: () => {
@@ -219,8 +232,8 @@ export default function ImportReviewModal({
             {planData?.files && planData.files.length > 0 && (
               <div className="space-y-1.5">
                 <Label>Download Contents</Label>
-                <ScrollArea className="h-32 rounded-md border p-2">
-                  <div className="space-y-0.5">
+                <ScrollArea className="h-40 rounded-md border p-2">
+                  <div className="space-y-1">
                     {planData.files.map((f) => (
                       <div key={f.name} className="flex items-center gap-1.5 text-xs">
                         {f.isArchive ? (
@@ -228,9 +241,33 @@ export default function ImportReviewModal({
                         ) : (
                           <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         )}
-                        <span className={f.isArchive ? "text-amber-400" : "text-muted-foreground"}>
+                        <span
+                          className={
+                            f.isArchive
+                              ? "text-amber-400 truncate min-w-0"
+                              : "text-muted-foreground truncate min-w-0"
+                          }
+                          title={f.name}
+                        >
                           {f.name}
                         </span>
+                        {importConfig?.sortExtras && !f.isArchive && (
+                          <select
+                            className="ml-auto shrink-0 text-[10px] rounded border border-border bg-background px-1 py-0.5"
+                            value={fileCategories[f.name] ?? f.category ?? "main"}
+                            onChange={(e) =>
+                              setFileCategories((prev) => ({
+                                ...prev,
+                                [f.name]: e.target.value,
+                              }))
+                            }
+                          >
+                            <option value="main">Main</option>
+                            <option value="dlc">DLC</option>
+                            <option value="update">Patch</option>
+                            <option value="extra">Extra</option>
+                          </select>
+                        )}
                       </div>
                     ))}
                     {planData.totalCount > planData.files.length && (

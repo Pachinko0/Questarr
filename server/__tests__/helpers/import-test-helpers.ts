@@ -52,6 +52,7 @@ export function makeImportConfig(overrides: Partial<ImportConfig> = {}): ImportC
     libraryRoot: "/data",
     autoDeleteAfterImport: false,
     ...overrides,
+    sortExtras: overrides.sortExtras ?? false,
   };
 }
 

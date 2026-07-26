@@ -1,9 +1,11 @@
 import { Game, ImportConfig } from "../../shared/schema.js";
+import { categorizeDownload, type DownloadCategory } from "../../shared/download-categorizer.js";
 import fs from "fs-extra";
 import path from "node:path";
 import { logger } from "../logger.js";
 import { isSensitivePath } from "../path-security.js";
 export type TransferMode = "copy" | "move" | "hardlink" | "symlink";
+export type { DownloadCategory };
 
 export function sanitizeFsName(name: string | null | undefined): string {
   // eslint-disable-next-line no-control-regex
@@ -19,6 +21,11 @@ export interface ImportResult {
   conflictsResolved: string[];
 }
 
+export interface FileCategoryEntry {
+  name: string;
+  category: DownloadCategory;
+}
+
 export interface ImportReview {
   needsReview: boolean;
   reviewReason?: string;
@@ -26,6 +33,7 @@ export interface ImportReview {
   proposedPath: string;
   strategy: "pc";
   ignoredExtensions?: string[];
+  fileCategories?: FileCategoryEntry[];
   importResult?: ImportResult;
 }
 
@@ -111,6 +119,47 @@ async function gatherFiles(rootPath: string): Promise<string[]> {
   return collected;
 }
 
+const CATEGORY_DIR_MAP: Record<DownloadCategory, string> = {
+  main: "",
+  dlc: "dlc",
+  update: "patch",
+  extra: "extra",
+};
+
+async function categorizeSourceFiles(
+  sourcePath: string,
+  sortExtras: boolean
+): Promise<FileCategoryEntry[]> {
+  const stats = await fs.stat(sourcePath);
+  if (!stats.isDirectory()) {
+    const name = path.basename(sourcePath);
+    return [{ name, category: "main" }];
+  }
+
+  const entries = await fs.readdir(sourcePath);
+  const result: FileCategoryEntry[] = [];
+
+  for (const name of entries) {
+    if (sortExtras) {
+      const parsed = path.parse(name);
+      const { category } = categorizeDownload(parsed.name);
+      result.push({ name, category });
+    } else {
+      result.push({ name, category: "main" });
+    }
+  }
+
+  return result;
+}
+
+function destinationForFile(
+  gameDir: string,
+  entry: FileCategoryEntry
+): string {
+  const subdir = CATEGORY_DIR_MAP[entry.category];
+  return subdir ? path.join(gameDir, subdir, entry.name) : path.join(gameDir, entry.name);
+}
+
 export class PCImportStrategy implements ImportStrategy {
   async planImport(
     sourcePath: string,
@@ -125,18 +174,28 @@ export class PCImportStrategy implements ImportStrategy {
 
     const stats = await fs.stat(sourcePath);
     const cleanTitle = sanitizeFsName(game.title);
-    const ext = stats.isDirectory() ? "" : path.extname(sourcePath);
-    const destination = path.join(targetRoot, platformDir ?? "PC", cleanTitle + ext);
+    const gameDir = path.join(targetRoot, platformDir ?? "PC", cleanTitle);
 
-    const destinationExists = await fs.pathExists(destination);
+    const destinationExists = await fs.pathExists(gameDir);
     const needsReview = destinationExists && !config.overwriteExisting;
+
+    const fileCategories = await categorizeSourceFiles(sourcePath, config.sortExtras);
+
+    let proposedPath: string;
+    if (stats.isDirectory() || config.sortExtras) {
+      proposedPath = gameDir;
+    } else {
+      const ext = path.extname(sourcePath);
+      proposedPath = gameDir + ext;
+    }
 
     return {
       needsReview,
       reviewReason: needsReview ? "Destination already exists" : undefined,
       originalPath: sourcePath,
-      proposedPath: destination,
+      proposedPath,
       strategy: "pc",
+      fileCategories: config.sortExtras ? fileCategories : undefined,
     };
   }
 
@@ -144,12 +203,40 @@ export class PCImportStrategy implements ImportStrategy {
     review: ImportReview,
     transferMode: "move" | "copy" | "hardlink" | "symlink"
   ): Promise<ImportResult> {
+    if (review.fileCategories && review.fileCategories.length > 0) {
+      const filesPlaced: string[] = [];
+      const conflictsResolved: string[] = [];
+      const srcStats = await fs.stat(review.originalPath);
+      const isSrcDir = srcStats.isDirectory();
+
+      for (const entry of review.fileCategories) {
+        const srcFile = isSrcDir
+          ? path.join(review.originalPath, entry.name)
+          : review.originalPath;
+        const destFile = destinationForFile(review.proposedPath, entry);
+
+        await fs.ensureDir(path.dirname(destFile));
+        const modeUsed = await transferFile(srcFile, destFile, transferMode);
+        filesPlaced.push(destFile);
+        if (modeUsed !== transferMode) {
+          conflictsResolved.push(`${entry.name} (mode fallback: ${modeUsed})`);
+        }
+      }
+
+      return {
+        destDir: review.proposedPath,
+        filesPlaced,
+        modeUsed: transferMode,
+        conflictsResolved,
+      };
+    }
+
     await fs.ensureDir(path.dirname(review.proposedPath));
     const modeUsed = await transferFile(review.originalPath, review.proposedPath, transferMode);
-    const filesPlaced = await gatherFiles(review.proposedPath);
+    const gathered = await gatherFiles(review.proposedPath);
     return {
       destDir: review.proposedPath,
-      filesPlaced,
+      filesPlaced: gathered,
       modeUsed,
       conflictsResolved: [],
     };

@@ -450,7 +450,7 @@ export class ImportManager {
   ): Promise<{
     originalPath: string | null;
     proposedPath: string;
-    files: Array<{ name: string; isArchive: boolean }>;
+    files: Array<{ name: string; isArchive: boolean; category?: string }>;
     hasArchive: boolean;
     totalCount: number;
   }> {
@@ -485,10 +485,18 @@ export class ImportManager {
           config,
           platformDir
         );
+
+        const filesWithCategories = config.sortExtras
+          ? files.map((f) => {
+              const cat = plan.fileCategories?.find((fc) => fc.name === f.name);
+              return { ...f, category: cat?.category ?? "main" };
+            })
+          : files;
+
         return {
           originalPath: resolvedOriginalPath,
           proposedPath: plan.proposedPath,
-          files,
+          files: filesWithCategories,
           hasArchive,
           totalCount,
         };
