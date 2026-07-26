@@ -1839,36 +1839,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         ];
 
-        // Fetch IGDB expansions
+        // Fetch IGDB expansions/DLCs/standalone expansions
         if (game.igdbId) {
           try {
             const igdbGame = await igdbClient.getGameById(game.igdbId);
-            if (igdbGame?.expansions) {
-              for (const exp of igdbGame.expansions) {
-                const existingGame = userGames.find((g) => g.igdbId === exp.id);
-                const expFiles = gameFiles.filter(
-                  (f) => f.category === "dlc" || f.category === "update"
-                );
-                slots.push({
-                  category: exp.category === 1 ? "dlc" : "update",
-                  label: exp.name,
-                  present: !!existingGame || expFiles.length > 0,
-                  files: expFiles.map((f) => ({
-                    id: f.id,
-                    originalName: f.originalName,
-                    storedName: f.storedName,
-                    downloadId: f.downloadId,
-                    fileSize: f.fileSize,
-                    createdAt: f.createdAt != null ? Number(f.createdAt) : null,
-                  })),
-                  igdbId: exp.id,
-                  coverUrl: exp.cover?.url ?? null,
-                  gameId: existingGame?.id,
-                });
-              }
+            const contentGroups = [
+              ...(igdbGame?.expansions ?? []),
+              ...(igdbGame?.dlcs ?? []),
+              ...(igdbGame?.standalone_expansions ?? []),
+              ...(igdbGame?.expanded_games ?? []),
+            ];
+            const seen = new Set<number>();
+            for (const item of contentGroups) {
+              if (seen.has(item.id)) continue;
+              seen.add(item.id);
+              const existingGame = userGames.find((g) => g.igdbId === item.id);
+              const itemCategory =
+                item.category === 1 || item.category === 2 ? "dlc" : "update";
+              const expFiles = gameFiles.filter((f) => f.category === itemCategory);
+              slots.push({
+                category: itemCategory,
+                label: item.name,
+                present: !!existingGame || expFiles.length > 0,
+                files: expFiles.map((f) => ({
+                  id: f.id,
+                  originalName: f.originalName,
+                  storedName: f.storedName,
+                  downloadId: f.downloadId,
+                  fileSize: f.fileSize,
+                  createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+                })),
+                igdbId: item.id,
+                coverUrl: item.cover?.url ?? null,
+                gameId: existingGame?.id,
+              });
             }
-          } catch {
-            // IGDB unavailable, fall back to file-based slots
+            if (seen.size === 0) {
+              routesLogger.debug({ igdbId: game.igdbId }, "No expansions/DLCs returned from IGDB");
+            }
+          } catch (err) {
+            routesLogger.warn({ error: err, igdbId: game.igdbId }, "Failed to fetch IGDB expansions");
           }
         }
 
@@ -2096,6 +2106,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         routesLogger.error({ error }, "error backfilling game files");
         res.status(500).json({ error: "Failed to backfill game files" });
       }
+    }
+  );
+
+  // Clear IGDB cache for a specific game (for debugging)
+  app.post(
+    "/api/igdb/clear-cache/:igdbId",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      const { igdbId } = req.params;
+      const id = parseInt(igdbId, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid IGDB ID" });
+      const cleared = igdbClient.clearCacheForGame(id);
+      res.json({ success: true, cleared });
     }
   );
 

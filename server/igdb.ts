@@ -15,7 +15,7 @@ export const IGDB_EARLY_ACCESS_STATUS = 4;
 
 // Shared field list for all IGDB game queries
 const IGDB_GAME_FIELDS =
-  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, themes.name, age_ratings.category, age_ratings.rating, screenshots.url, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status, category, expansions.name, expansions.cover.url, expansions.first_release_date, expansions.category";
+  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, themes.name, age_ratings.category, age_ratings.rating, screenshots.url, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status, category, expansions.name, expansions.cover.url, expansions.first_release_date, expansions.category, dlcs.name, dlcs.cover.url, dlcs.first_release_date, dlcs.category, standalone_expansions.name, standalone_expansions.cover.url, standalone_expansions.first_release_date, standalone_expansions.category, expanded_games.name, expanded_games.cover.url, expanded_games.first_release_date, expanded_games.category";
 
 // IGDB theme name flagged as adult content (Erotic)
 const ADULT_THEME_NAMES = new Set(["Erotic"]);
@@ -82,6 +82,27 @@ export interface IGDBGame {
   status?: number;
   category?: number;
   expansions?: Array<{
+    id: number;
+    name: string;
+    cover?: { url: string };
+    first_release_date?: number;
+    category?: number;
+  }>;
+  dlcs?: Array<{
+    id: number;
+    name: string;
+    cover?: { url: string };
+    first_release_date?: number;
+    category?: number;
+  }>;
+  standalone_expansions?: Array<{
+    id: number;
+    name: string;
+    cover?: { url: string };
+    first_release_date?: number;
+    category?: number;
+  }>;
+  expanded_games?: Array<{
     id: number;
     name: string;
     cover?: { url: string };
@@ -1111,6 +1132,17 @@ class IGDBClient {
       releaseYear: releaseDate ? releaseDate.getFullYear() : null,
       earlyAccess: igdbGame.status === 4,
     };
+  }
+
+  clearCacheForGame(igdbId: number): number {
+    let cleared = 0;
+    for (const [key] of this.cache) {
+      if (key.includes(`where id = ${igdbId};`)) {
+        this.cache.delete(key);
+        cleared++;
+      }
+    }
+    return cleared;
   }
 }
 
