@@ -1703,6 +1703,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get files on disk for a specific game
+  app.get(
+    "/api/games/:gameId/files",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const { gameId } = req.params;
+        const userId = req.user!.id;
+
+        const game = await resolveOwnedGame(gameId, userId, res);
+        if (!game) return;
+
+        if (!game.libraryPath) {
+          return res.json({ files: [] });
+        }
+
+        const gameDir = path.resolve(game.libraryPath);
+
+        let entries: string[];
+        try {
+          entries = await fs.promises.readdir(gameDir);
+        } catch (err) {
+          const fsError = err as NodeJS.ErrnoException;
+          if (fsError.code === "ENOENT") {
+            return res.json({ files: [] });
+          }
+          throw err;
+        }
+
+        const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
+        const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> = [];
+
+        for (const entry of entries) {
+          const fullPath = path.join(gameDir, entry);
+          let stat: fs.Stats;
+          try {
+            stat = await fs.promises.stat(fullPath);
+          } catch {
+            continue;
+          }
+
+          const isDirectory = stat.isDirectory();
+          const lowerName = entry.toLowerCase();
+
+          if (isDirectory && CATEGORY_SUBDIRS.has(lowerName)) {
+            let subEntries: string[];
+            try {
+              subEntries = await fs.promises.readdir(fullPath);
+            } catch {
+              continue;
+            }
+            for (const sub of subEntries) {
+              const subFullPath = path.join(fullPath, sub);
+              try {
+                const subStat = await fs.promises.stat(subFullPath);
+                files.push({
+                  name: sub,
+                  path: subFullPath,
+                  category: lowerName,
+                  isDirectory: subStat.isDirectory(),
+                });
+              } catch {
+                continue;
+              }
+            }
+          } else {
+            const nameWithoutExt = path.parse(entry).name;
+            const { category } = categorizeDownload(nameWithoutExt);
+            files.push({
+              name: entry,
+              path: fullPath,
+              category,
+              isDirectory,
+            });
+          }
+        }
+
+        res.json({ files });
+      } catch (error) {
+        routesLogger.error({ error }, "error fetching game files");
+        res.status(500).json({ error: "Failed to fetch game files" });
+      }
+    }
+  );
+
   // IGDB discovery routes
 
   // Search IGDB for games

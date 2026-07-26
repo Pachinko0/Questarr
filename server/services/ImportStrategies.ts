@@ -122,7 +122,7 @@ async function gatherFiles(rootPath: string): Promise<string[]> {
 const CATEGORY_DIR_MAP: Record<DownloadCategory, string> = {
   main: "",
   dlc: "dlc",
-  update: "patch",
+  update: "update",
   extra: "extra",
 };
 

@@ -264,7 +264,7 @@ export default function ImportReviewModal({
                           >
                             <option value="main">Main</option>
                             <option value="dlc">DLC</option>
-                            <option value="update">Patch</option>
+                            <option value="update">Update</option>
                             <option value="extra">Extra</option>
                           </select>
                         )}

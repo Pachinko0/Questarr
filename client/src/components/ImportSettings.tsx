@@ -296,7 +296,7 @@ export default function ImportSettings() {
                           <Label>Sort extras into subfolders</Label>
                           <p className="text-xs text-muted-foreground">
                             When a download contains multiple files, sort DLC, patches, and extras
-                            into <code>dlc/</code>, <code>patch/</code>, and <code>extra/</code>{" "}
+                            into <code>dlc/</code>, <code>update/</code>, and <code>extra/</code>{" "}
                             subdirectories inside the game folder. Compatible with ROM&#39;s folder
                             conventions.
                           </p>
