@@ -1,4 +1,5 @@
 import { type IStorage } from "../storage.js";
+import type { InsertGameFile } from "@shared/schema";
 import { PathMappingService } from "./PathMappingService.js";
 import { PlatformMappingService } from "./PlatformMappingService.js";
 import { ArchiveService } from "./ArchiveService.js";
@@ -407,6 +408,20 @@ export class ImportManager {
 
       await this.finalizeImport(downloadId, game, result.destDir);
 
+      if (plan.fileCategories && plan.fileCategories.length > 0) {
+        const gameDir = result.destDir;
+        const files: InsertGameFile[] = plan.fileCategories.map((fc) => ({
+          gameId: game.id,
+          downloadId: downloadId,
+          originalName: fc.name,
+          storedName: fc.name,
+          category: fc.category,
+          filePath: path.join(gameDir, fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`),
+          fileSize: 0,
+        }));
+        await this.storage.addGameFilesBatch(files);
+      }
+
       if (
         config.autoDeleteAfterImport &&
         (config.transferMode === "copy" || config.transferMode === "move")
@@ -585,6 +600,20 @@ export class ImportManager {
       const result = await strategy.executeImport(planToExecute, transferMode);
 
       await this.finalizeImport(downloadId, game, result.destDir);
+
+      if (overridePlan.fileCategories && overridePlan.fileCategories.length > 0) {
+        const gameDir = result.destDir;
+        const files: InsertGameFile[] = overridePlan.fileCategories.map((fc) => ({
+          gameId: game.id,
+          downloadId: downloadId,
+          originalName: fc.name,
+          storedName: fc.name,
+          category: fc.category,
+          filePath: path.join(gameDir, fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`),
+          fileSize: 0,
+        }));
+        await this.storage.addGameFilesBatch(files);
+      }
     } catch (err) {
       logger.error({ err, downloadId }, "[ImportManager] confirmImport failed");
       try {

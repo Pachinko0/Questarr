@@ -391,7 +391,7 @@ export default function ImportSettings() {
                       Naming
                     </p>
                     <div className="space-y-1.5">
-                      <Label>Rename Pattern</Label>
+                      <Label>Rename Pattern (Main Game)</Label>
                       <Input
                         value={localConfig.renamePattern}
                         onChange={(e) =>

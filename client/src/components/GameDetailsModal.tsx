@@ -47,6 +47,7 @@ import {
   UserRound,
   Zap,
   TrendingUp,
+  Package,
   HardDrive,
   CheckCircle2,
   Loader2,
@@ -65,6 +66,8 @@ import {
   Folder,
   ChevronLeft,
   ChevronRight,
+  Upload,
+  Scan,
 } from "lucide-react";
 import { FaSteam, FaRedditAlien, FaDiscord, FaWikipediaW, FaTwitch } from "react-icons/fa";
 import {
@@ -85,7 +88,24 @@ import StatusBadge, { getStatusLabel } from "./StatusBadge";
 import { apiRequest } from "@/lib/queryClient";
 import { cn, safeUrl, formatBytes, isDiscoveryId } from "@/lib/utils";
 
+import { FileBrowser } from "./FileBrowser";
 const GameDownloadDialog = lazy(() => import("./GameDownloadDialog"));
+
+type ContentSlotFile = {
+  id: string;
+  originalName: string;
+  storedName: string;
+  downloadId: string;
+  fileSize: number | null;
+  createdAt: number | null;
+};
+
+type ContentSlot = {
+  category: string;
+  label: string;
+  present: boolean;
+  files: ContentSlotFile[];
+};
 
 interface GameDetailsModalProps {
   game: Game | null;
@@ -611,16 +631,66 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     staleTime: 24 * 60 * 60 * 1000,
   });
 
-  const { data: gameFiles = [], isLoading: filesLoading } = useQuery<
+  const [scanResults, setScanResults] = useState<
     Array<{ name: string; path: string; category: string; isDirectory: boolean }>
-  >({
-    queryKey: [`/api/games/${game?.id}/files`],
+  >([]);
+  const [importDialogSlot, setImportDialogSlot] = useState<string | null>(null);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
+  const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
+  const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
+
+  const { data: contentData, isLoading: contentLoading } = useQuery<{
+    slots: ContentSlot[];
+  }>({
+    queryKey: [`/api/games/${game?.id}/content`],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/games/${game!.id}/files`);
-      const data = await res.json();
-      return data.files;
+      const res = await apiRequest("GET", `/api/games/${game!.id}/content`);
+      return res.json();
     },
-    enabled: open && !!game?.id && !isDiscoveryId(game.id),
+    enabled: open && !!game?.id,
+  });
+
+  const deleteGameFileMutation = useMutation({
+    mutationFn: async (fileId: string) => {
+      await apiRequest("DELETE", `/api/game-files/${fileId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/games/${game?.id}/content`] });
+      toast({ description: "File removed" });
+    },
+    onError: () => {
+      toast({ description: "Failed to delete file", variant: "destructive" });
+    },
+  });
+
+  const addGameFileMutation = useMutation({
+    mutationFn: async (data: {
+      gameId: string;
+      originalName: string;
+      storedName: string;
+      category: string;
+      filePath: string;
+      fileSize: number | null;
+    }) => {
+      const res = await apiRequest("POST", `/api/game-files`, {
+        gameId: data.gameId,
+        downloadId: "",
+        originalName: data.originalName,
+        storedName: data.storedName,
+        category: data.category,
+        filePath: data.filePath,
+        fileSize: data.fileSize,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/games/${game?.id}/content`] });
+      toast({ description: "File added" });
+    },
+    onError: () => {
+      toast({ description: "Failed to add file", variant: "destructive" });
+    },
   });
 
   if (!game) {
@@ -870,12 +940,12 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <TabsTrigger value="files" aria-label="Files on disk" className="gap-1.5">
-                <File className="h-3.5 w-3.5 sm:hidden" />
-                <span className="hidden sm:inline">Files</span>
+              <TabsTrigger value="content" aria-label="Game content" className="gap-1.5">
+                <Package className="h-3.5 w-3.5 sm:hidden" />
+                <span className="hidden sm:inline">Content</span>
               </TabsTrigger>
             </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Files</TooltipContent>
+            <TooltipContent className="sm:hidden">Content</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1032,68 +1102,121 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                   <p className="text-sm">No downloads recorded for this game.</p>
                 </div>
               ) : (
-                gameDownloads.map((dl) => (
-                  <Card key={dl.id} className="bg-card/60">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2 min-w-0">
-                          <DownloadStatusIcon status={dl.status} />
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium leading-snug truncate">
-                              {dl.downloadTitle}
-                            </p>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-                              {dl.downloaderName && (
-                                <span className="text-xs text-muted-foreground">
-                                  via {dl.downloaderName}
-                                </span>
-                              )}
-                              <Badge variant="outline" className="text-xs px-1.5 py-0">
-                                {dl.downloadType}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground capitalize">
-                                {getTrackedDownloadStatusLabel(dl.status)}
-                              </span>
-                              {dl.errorMessage && (
-                                <span className="text-xs text-red-400 break-words max-w-full">
-                                  {dl.errorMessage}
-                                </span>
+                gameDownloads.map((dl) => {
+                  const isExpanded = expandedDownloads.has(dl.id);
+                  return (
+                    <Card key={dl.id} className="bg-card/60">
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2 min-w-0 flex-1">
+                            <DownloadStatusIcon status={dl.status} />
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                className="w-full text-left"
+                                onClick={() => {
+                                  const next = new Set(expandedDownloads);
+                                  if (isExpanded) {
+                                    next.delete(dl.id);
+                                  } else {
+                                    next.add(dl.id);
+                                    if (!downloadFilesCache[dl.id]) {
+                                      apiRequest("GET", `/api/game-files/by-download/${dl.id}`)
+                                        .then((r) => r.json())
+                                        .then((files) =>
+                                          setDownloadFilesCache((prev) => ({
+                                            ...prev,
+                                            [dl.id]: files,
+                                          }))
+                                        )
+                                        .catch(() => {});
+                                    }
+                                  }
+                                  setExpandedDownloads(next);
+                                }}
+                              >
+                                <p className="text-sm font-medium leading-snug truncate">
+                                  {dl.downloadTitle}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                                  {dl.downloaderName && (
+                                    <span className="text-xs text-muted-foreground">
+                                      via {dl.downloaderName}
+                                    </span>
+                                  )}
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0">
+                                    {dl.downloadType}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground capitalize">
+                                    {getTrackedDownloadStatusLabel(dl.status)}
+                                  </span>
+                                  {dl.errorMessage && (
+                                    <span className="text-xs text-red-400 break-words max-w-full">
+                                      {dl.errorMessage}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                              {isExpanded && (
+                                <div className="space-y-1 mt-2 border-t border-border/50 pt-2">
+                                  {!downloadFilesCache[dl.id] ? (
+                                    <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                                  ) : downloadFilesCache[dl.id].length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">
+                                      No files recorded for this download.
+                                    </p>
+                                  ) : (
+                                    downloadFilesCache[dl.id].map((f) => (
+                                      <div
+                                        key={f.id}
+                                        className="flex items-center justify-between gap-2 rounded bg-muted/30 px-2.5 py-1.5 text-xs"
+                                      >
+                                        <div className="flex-1 min-w-0">
+                                          <p className="truncate font-medium">{f.originalName}</p>
+                                          <p className="text-muted-foreground">
+                                            {f.fileSize != null ? formatBytes(f.fileSize) : "—"}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
                               )}
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-start gap-3 flex-shrink-0">
-                          <div className="text-right">
-                            {dl.fileSize ? (
-                              <p className="text-sm font-medium">{formatBytes(dl.fileSize)}</p>
-                            ) : null}
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                              {dl.addedAt ? new Date(dl.addedAt).toLocaleDateString() : "—"}
-                            </p>
-                            {dl.completedAt && (
-                              <p className="text-xs text-emerald-400 mt-0.5">
-                                Done {new Date(dl.completedAt).toLocaleDateString()}
+                          <div className="flex items-start gap-3 flex-shrink-0">
+                            <div className="text-right">
+                              {dl.fileSize ? (
+                                <p className="text-sm font-medium">{formatBytes(dl.fileSize)}</p>
+                              ) : null}
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {dl.addedAt ? new Date(dl.addedAt).toLocaleDateString() : "—"}
                               </p>
-                            )}
+                              {dl.completedAt && (
+                                <p className="text-xs text-emerald-400 mt-0.5">
+                                  Done {new Date(dl.completedAt).toLocaleDateString()}
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              aria-label={`Remove download record ${dl.downloadTitle}`}
+                              disabled={
+                                removeDownloadMutation.isPending &&
+                                removeDownloadMutation.variables === dl.id
+                              }
+                              onClick={() => removeDownloadMutation.mutate(dl.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                            aria-label={`Remove download record ${dl.downloadTitle}`}
-                            disabled={
-                              removeDownloadMutation.isPending &&
-                              removeDownloadMutation.variables === dl.id
-                            }
-                            onClick={() => removeDownloadMutation.mutate(dl.id)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
                         </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
+                      </CardContent>
+                    </Card>
+                  );
+                })
               )}
             </div>
           </ScrollArea>
@@ -1136,85 +1259,230 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
           </ScrollArea>
         </TabsContent>
 
-        {/* ── Files tab ── */}
+        {/* ── Content tab ── */}
         <TabsContent
-          value="files"
+          value="content"
           forceMount
           className="flex-1 min-h-0 data-[state=inactive]:hidden"
         >
           <ScrollArea className="h-full">
-            <div className="pr-4 pb-2">
-              {filesLoading ? (
+            <div className="pr-4 pb-2 space-y-4">
+              {contentLoading ? (
                 <div className="flex items-center justify-center py-8 text-muted-foreground">
                   <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                  Loading files…
-                </div>
-              ) : gameFiles.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
-                  <HardDrive className="w-8 h-8 opacity-40" />
-                  <p className="text-sm">No files found on disk.</p>
+                  Loading content…
                 </div>
               ) : (
-                (() => {
-                  const groups = new Map<string, typeof gameFiles>();
-                  for (const f of gameFiles) {
-                    if (!groups.has(f.category)) groups.set(f.category, []);
-                    groups.get(f.category)!.push(f);
-                  }
-                  const hasMultipleGroups = groups.size > 1;
-                  const categoryOrder = ["main", "dlc", "update", "extra"];
-                  const categoryLabels: Record<string, string> = {
-                    main: "Main Game",
-                    dlc: "DLC & Expansions",
-                    update: "Updates & Patches",
-                    extra: "Extras",
-                  };
-
-                  if (!hasMultipleGroups) {
-                    return (
-                      <div className="space-y-1">
-                        {gameFiles.map((f, i) => (
-                          <div key={i} className="flex items-center gap-2 text-sm py-1">
-                            {f.isDirectory ? (
-                              <Folder className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                            ) : (
-                              <File className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                            )}
-                            <span className="truncate">{f.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-4">
-                      {categoryOrder.map((cat) => {
-                        const catFiles = groups.get(cat);
-                        if (!catFiles || catFiles.length === 0) return null;
-                        return (
-                          <div key={cat}>
-                            <h4 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">
-                              {categoryLabels[cat] || cat}
-                            </h4>
-                            <div className="space-y-1">
-                              {catFiles.map((f, i) => (
-                                <div key={i} className="flex items-center gap-2 text-sm py-1">
-                                  {f.isDirectory ? (
-                                    <Folder className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                                  ) : (
-                                    <File className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                                  )}
-                                  <span className="truncate">{f.name}</span>
+                <>
+                  {contentData?.slots?.map((slot) => (
+                    <Card key={slot.category} className="bg-card/60">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold">{slot.label}</h4>
+                          {slot.present ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {slot.files.length} file{slot.files.length !== 1 ? "s" : ""}
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="text-xs bg-amber-600/20 text-amber-400 border-amber-600/30"
+                            >
+                              Missing
+                            </Badge>
+                          )}
+                        </div>
+                        {slot.present ? (
+                          <div className="space-y-1.5">
+                            {slot.files.map((file) => (
+                              <div
+                                key={file.id}
+                                className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="truncate font-medium">{file.originalName}</p>
+                                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                    {file.fileSize != null && (
+                                      <span>{formatBytes(file.fileSize)}</span>
+                                    )}
+                                    {file.createdAt && (
+                                      <span>
+                                        {new Date(file.createdAt).toLocaleDateString()}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                              ))}
-                            </div>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                                      disabled={deleteGameFileMutation.isPending}
+                                      onClick={() => deleteGameFileMutation.mutate(file.id)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Delete file</TooltipContent>
+                                </Tooltip>
+                              </div>
+                            ))}
                           </div>
-                        );
-                      })}
+                        ) : (
+                          <div className="flex items-center gap-2 mt-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1.5"
+                                  onClick={() => setDownloadOpen(true)}
+                                >
+                                  <Search className="h-3.5 w-3.5" />
+                                  Search
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Search indexers for this game</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1.5"
+                                  onClick={() => {
+                                    setImportTargetCategory(slot.category);
+                                    setFileBrowserOpen(true);
+                                  }}
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                  Manual Import
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Select a file from disk</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {/* Scan button */}
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="gap-2"
+                      onClick={async () => {
+                        if (!game) return;
+                        try {
+                          const res = await apiRequest(
+                            "GET",
+                            `/api/games/${game.id}/files`
+                          );
+                          const data = await res.json();
+                          setScanResults(data.files ?? []);
+                        } catch {
+                          toast({
+                            description: "Failed to scan game folder",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                    >
+                      <Scan className="h-4 w-4" />
+                      Scan Disk
+                    </Button>
+                  </div>
+                  {/* Scan results */}
+                  {scanResults.length > 0 && (
+                    <Card className="border-amber-500/30">
+                      <CardContent className="p-4 space-y-2">
+                        <h4 className="text-sm font-semibold flex items-center gap-2">
+                          <Scan className="h-4 w-4 text-amber-400" />
+                          Files found on disk
+                        </h4>
+                        {scanResults.map((file, idx) => {
+                          const alreadyInDb = contentData?.slots?.some((s) =>
+                            s.files.some(
+                              (f) =>
+                                f.originalName === file.name ||
+                                f.storedName === file.name
+                            )
+                          );
+                          if (alreadyInDb) return null;
+                          return (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="truncate">{file.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  {file.path}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <select
+                                  className="h-7 rounded border border-input bg-background px-2 text-xs"
+                                  value={file.category}
+                                  onChange={() => {}}
+                                  aria-label="Category"
+                                >
+                                  <option value="main">Main</option>
+                                  <option value="dlc">DLC</option>
+                                  <option value="update">Update</option>
+                                  <option value="extra">Extra</option>
+                                </select>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
+                                  disabled={addGameFileMutation.isPending}
+                                  onClick={() => {
+                                    addGameFileMutation.mutate({
+                                      gameId: game!.id,
+                                      originalName: file.name,
+                                      storedName: file.name,
+                                      category: file.category,
+                                      filePath: file.path,
+                                      fileSize: null,
+                                    });
+                                    setScanResults((prev) =>
+                                      prev.filter((_, i) => i !== idx)
+                                    );
+                                  }}
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {scanResults.filter((file) => {
+                          const alreadyInDb = contentData?.slots?.some((s) =>
+                            s.files.some(
+                              (f) =>
+                                f.originalName === file.name ||
+                                f.storedName === file.name
+                            )
+                          );
+                          return !alreadyInDb;
+                        }).length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-2">
+                            All files on disk are already tracked.
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                  {(!contentData?.slots || contentData.slots.length === 0) && (
+                    <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+                      <Package className="w-8 h-8 opacity-40" />
+                      <p className="text-sm">No content information available.</p>
                     </div>
-                  );
-                })()
+                  )}
+                </>
               )}
             </div>
           </ScrollArea>
@@ -1579,6 +1847,29 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       {downloadOpen && (
         <Suspense fallback={null}>
           <GameDownloadDialog game={game} open={downloadOpen} onOpenChange={setDownloadOpen} />
+        </Suspense>
+      )}
+
+      {fileBrowserOpen && (
+        <Suspense fallback={null}>
+          <FileBrowser
+            open={fileBrowserOpen}
+            onOpenChange={setFileBrowserOpen}
+            onSelect={(path) => {
+              addGameFileMutation.mutate({
+                gameId: game.id,
+                originalName: path.split("/").pop() || path.split("\\").pop() || path,
+                storedName: path.split("/").pop() || path.split("\\").pop() || path,
+                category: importTargetCategory,
+                filePath: path,
+                fileSize: null,
+              });
+              setFileBrowserOpen(false);
+            }}
+            root="/"
+            title="Select File to Import"
+            initialPath="/"
+          />
         </Suspense>
       )}
 
