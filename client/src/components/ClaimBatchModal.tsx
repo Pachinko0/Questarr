@@ -311,7 +311,7 @@ function GroupRow({
     queryFn: () =>
       apiRequest(
         "GET",
-        `/api/igdb/search?q=${encodeURIComponent(igdbDebouncedQuery)}&limit=6&includeUndated=${state.showUndatedGames}`
+        `/api/igdb/search?q=${encodeURIComponent(igdbDebouncedQuery)}&limit=30&includeUndated=${state.showUndatedGames}`
       ).then((r) => r.json()),
     enabled: state.igdbOpen && igdbDebouncedQuery.trim().length > 2,
   });

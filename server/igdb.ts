@@ -216,19 +216,37 @@ class IGDBClient {
     limit: number,
     options: SearchGamesOptions = {}
   ): IGDBGame[] {
-    const datedResults = results
-      .filter((game) => typeof game.first_release_date === "number")
+    const priorityCategories = new Set([0, 4]);
+    const priorityResults = results
+      .filter((game) => priorityCategories.has(game.category ?? -1))
+      .sort((left, right) => (right.first_release_date ?? 0) - (left.first_release_date ?? 0));
+
+    const otherResults = results
+      .filter((game) => !priorityCategories.has(game.category ?? -1))
       .sort((left, right) => (right.first_release_date ?? 0) - (left.first_release_date ?? 0));
 
     if (options.includeUndated === false) {
-      return datedResults.slice(0, limit);
+      return [...priorityResults, ...otherResults].slice(0, limit);
     }
 
-    const undatedResults = results.filter((game) => typeof game.first_release_date !== "number");
-    const orderedResults = options.undatedFirst
-      ? [...undatedResults, ...datedResults]
-      : [...datedResults, ...undatedResults];
-    return orderedResults.slice(0, limit);
+    const undatedPriority = priorityResults.filter(
+      (game) => typeof game.first_release_date !== "number"
+    );
+    const datedPriority = priorityResults.filter(
+      (game) => typeof game.first_release_date === "number"
+    );
+    const undatedOther = otherResults.filter(
+      (game) => typeof game.first_release_date !== "number"
+    );
+    const datedOther = otherResults.filter(
+      (game) => typeof game.first_release_date === "number"
+    );
+
+    const ordered = options.undatedFirst
+      ? [...undatedPriority, ...datedPriority, ...undatedOther, ...datedOther]
+      : [...datedPriority, ...undatedPriority, ...datedOther, ...undatedOther];
+
+    return ordered.slice(0, limit);
   }
 
   private async getCredentials(): Promise<{
@@ -612,6 +630,18 @@ class IGDBClient {
     // ⚡ Bolt: Cache game data for 24 hours as it's unlikely to change frequently.
     const results = await this.makeRequest<IGDBGame[]>("games", igdbQuery, 24 * 60 * 60 * 1000);
     return results.length > 0 ? results[0] : null;
+  }
+
+  async getGamesByParentId(parentId: number): Promise<IGDBGame[]> {
+    if (!(await this.ensureConfigured())) return [];
+
+    const igdbQuery = `
+      fields ${IGDB_GAME_FIELDS};
+      where parent_game = ${parentId};
+      limit 50;
+    `;
+
+    return this.makeRequest<IGDBGame[]>("games", igdbQuery, 24 * 60 * 60 * 1000);
   }
 
   async getGameIdBySteamAppId(steamAppId: number): Promise<number | null> {
@@ -1138,6 +1168,7 @@ class IGDBClient {
       aggregatedRating: igdbGame.aggregated_rating
         ? Math.round(igdbGame.aggregated_rating) / 10
         : undefined,
+      igdbCategory: igdbGame.category ?? null,
       // For Discovery games, don't set a status since they're not in collection yet
       status: null,
       isReleased,

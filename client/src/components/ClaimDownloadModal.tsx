@@ -45,6 +45,7 @@ interface ClaimDownloadModalProps {
 
 interface IgdbSearchResult extends Game {
   inCollection?: boolean;
+  igdbCategory?: number | null;
 }
 
 export default function ClaimDownloadModal({
@@ -115,7 +116,7 @@ export default function ClaimDownloadModal({
       if (!debouncedIgdbQuery.trim()) return [];
       const res = await apiRequest(
         "GET",
-        `/api/igdb/search?q=${encodeURIComponent(debouncedIgdbQuery)}&limit=10&includeUndated=${showUndatedGames}`
+        `/api/igdb/search?q=${encodeURIComponent(debouncedIgdbQuery)}&limit=30&includeUndated=${showUndatedGames}`
       );
       return res.json();
     },

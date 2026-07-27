@@ -21,10 +21,10 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { Search, Plus, Star, AlertCircle, Calendar, Check, Loader2 } from "lucide-react";
+import { Search, Plus, Star, AlertCircle, Calendar, Check, Loader2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { type Game, type InsertGame, type Config } from "@shared/schema";
-import { mapGameToInsertGame } from "@/lib/utils";
+import { cn, mapGameToInsertGame } from "@/lib/utils";
 import { Link } from "wouter";
 import { apiFetch, apiRequest } from "@/lib/queryClient";
 import { getAddGamePendingQuery, clearAddGamePendingQuery } from "@/lib/add-game-store";
@@ -32,7 +32,51 @@ import { useIsMobile } from "@/hooks/use-mobile";
 
 interface SearchResult extends Game {
   inCollection?: boolean;
+  igdbCategory?: number | null;
 }
+
+const IGDB_CATEGORY_LABELS: Record<number, string> = {
+  0: "Main Game",
+  1: "DLC",
+  2: "Expansion",
+  3: "Bundle",
+  4: "Standalone",
+  5: "Mod",
+  6: "Episode",
+  7: "Season",
+  8: "Remake",
+  9: "Remaster",
+  10: "Expanded Game",
+  11: "Port",
+  12: "Fork",
+  13: "Pack",
+};
+
+const IGDB_CATEGORY_COLORS: Record<number, string> = {
+  0: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  1: "bg-blue-600/30 text-blue-300 border-blue-500/40",
+  2: "bg-purple-600/30 text-purple-300 border-purple-500/40",
+  3: "bg-teal-600/30 text-teal-300 border-teal-500/40",
+  4: "bg-emerald-600/30 text-emerald-300 border-emerald-500/40",
+  5: "bg-pink-600/30 text-pink-300 border-pink-500/40",
+  6: "bg-cyan-600/30 text-cyan-300 border-cyan-500/40",
+  7: "bg-orange-600/30 text-orange-300 border-orange-500/40",
+  8: "bg-indigo-600/30 text-indigo-300 border-indigo-500/40",
+  9: "bg-violet-600/30 text-violet-300 border-violet-500/40",
+  10: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  11: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  12: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  13: "bg-amber-600/30 text-amber-300 border-amber-500/40",
+};
+
+const CATEGORY_FILTER_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "0", label: "Main Game" },
+  { value: "1", label: "DLC" },
+  { value: "2", label: "Expansion" },
+  { value: "4", label: "Standalone" },
+  { value: "13", label: "Pack" },
+] as const;
 
 interface AddGameModalProps {
   children: React.ReactNode;
@@ -44,6 +88,8 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [showUndatedGames, setShowUndatedGames] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
@@ -75,6 +121,8 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
       setSearchQuery("");
       setDebouncedQuery("");
       setShowUndatedGames(false);
+      setCategoryFilter("all");
+      setPlatformFilter("all");
     }
   }, [open, initialQuery]);
 
@@ -89,7 +137,7 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
         headers["Authorization"] = `Bearer ${token}`;
       }
       const response = await fetch(
-        `/api/igdb/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&includeUndated=${showUndatedGames}`,
+        `/api/igdb/search?q=${encodeURIComponent(debouncedQuery)}&limit=30&includeUndated=${showUndatedGames}`,
         { headers }
       );
       if (!response.ok) throw new Error("Search failed");
@@ -162,6 +210,30 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
     }));
   }, [searchResults, userGameIgdbIds]);
 
+  // Available platforms across all results
+  const availablePlatforms = useMemo(() => {
+    const platforms = new Set<string>();
+    for (const game of resultsWithCollectionStatus) {
+      for (const p of game.platforms ?? []) {
+        platforms.add(p);
+      }
+    }
+    return Array.from(platforms).sort();
+  }, [resultsWithCollectionStatus]);
+
+  // Filter results by category and platform
+  const filteredResults = useMemo(() => {
+    return resultsWithCollectionStatus.filter((game) => {
+      if (categoryFilter !== "all" && game.igdbCategory !== Number(categoryFilter)) {
+        return false;
+      }
+      if (platformFilter !== "all" && !(game.platforms ?? []).includes(platformFilter)) {
+        return false;
+      }
+      return true;
+    });
+  }, [resultsWithCollectionStatus, categoryFilter, platformFilter]);
+
   const igdbNotConfigured = config && !config.igdb?.configured;
 
   const isAddingGame = (igdbId: number | null | undefined) =>
@@ -212,14 +284,39 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
                     aria-label="Search games"
                   />
                 </div>
-                <div className="flex items-center justify-between gap-2 px-0.5">
-                  <span className="text-xs text-muted-foreground">Show undated games first</span>
-                  <Switch
-                    checked={showUndatedGames}
-                    onCheckedChange={setShowUndatedGames}
-                    aria-label="Show undated games first"
-                  />
-                </div>
+                  <div className="flex items-center justify-between gap-2 px-0.5">
+                    <span className="text-xs text-muted-foreground">Show undated games first</span>
+                    <Switch
+                      checked={showUndatedGames}
+                      onCheckedChange={setShowUndatedGames}
+                      aria-label="Show undated games first"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      className="flex-1 h-8 text-xs rounded-md border border-input bg-background px-2"
+                      aria-label="Filter by category"
+                    >
+                      {CATEGORY_FILTER_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    {availablePlatforms.length > 0 && (
+                      <select
+                        value={platformFilter}
+                        onChange={(e) => setPlatformFilter(e.target.value)}
+                        className="flex-1 h-8 text-xs rounded-md border border-input bg-background px-2"
+                        aria-label="Filter by platform"
+                      >
+                        <option value="all">All Platforms</option>
+                        {availablePlatforms.map((p) => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
               </div>
 
               {/* Scrollable results */}
@@ -239,13 +336,13 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
                   </div>
                 )}
 
-                {!isSearching && debouncedQuery && resultsWithCollectionStatus.length === 0 && (
+                {!isSearching && debouncedQuery && filteredResults.length === 0 && (
                   <div className="text-center py-10 text-sm text-muted-foreground">
                     No games found. Try a different search term.
                   </div>
                 )}
 
-                {resultsWithCollectionStatus.map((game) => (
+                {filteredResults.map((game) => (
                   <div
                     key={game.id}
                     className="flex gap-3 rounded-lg bg-muted/40 p-3"
@@ -264,6 +361,11 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
                         >
                           {game.title}
                         </h3>
+                        {game.igdbCategory != null && IGDB_CATEGORY_LABELS[game.igdbCategory] && (
+                          <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 shrink-0 mt-0.5", IGDB_CATEGORY_COLORS[game.igdbCategory])}>
+                            {IGDB_CATEGORY_LABELS[game.igdbCategory]}
+                          </Badge>
+                        )}
                         {game.inCollection ? (
                           <Badge variant="default" className="text-xs flex-shrink-0 mt-0.5 gap-1">
                             <Check className="w-3 h-3" />
@@ -378,14 +480,51 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
               </Button>
             </form>
 
-            <div className="mb-4 flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Show undated games first</p>
-                <p className="text-xs text-muted-foreground">
-                  Include titles without a release date and place them before dated results.
-                </p>
+            <div className="mb-4 space-y-3">
+              <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Show undated games first</p>
+                  <p className="text-xs text-muted-foreground">
+                    Include titles without a release date and place them before dated results.
+                  </p>
+                </div>
+                <Switch checked={showUndatedGames} onCheckedChange={setShowUndatedGames} />
               </div>
-              <Switch checked={showUndatedGames} onCheckedChange={setShowUndatedGames} />
+              <div className="flex gap-2">
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  className="h-9 text-sm rounded-md border border-input bg-background px-3"
+                  aria-label="Filter by category"
+                >
+                  {CATEGORY_FILTER_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                {availablePlatforms.length > 0 && (
+                  <select
+                    value={platformFilter}
+                    onChange={(e) => setPlatformFilter(e.target.value)}
+                    className="h-9 text-sm rounded-md border border-input bg-background px-3"
+                    aria-label="Filter by platform"
+                  >
+                    <option value="all">All Platforms</option>
+                    {availablePlatforms.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                )}
+                {(categoryFilter !== "all" || platformFilter !== "all") && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setCategoryFilter("all"); setPlatformFilter("all"); }}
+                    className="h-9"
+                  >
+                    <X className="w-3 h-3 mr-1" /> Clear
+                  </Button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-4" aria-live="polite">
@@ -393,13 +532,13 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
                 <div className="text-center py-8 text-muted-foreground">Searching games...</div>
               )}
 
-              {!isSearching && debouncedQuery && resultsWithCollectionStatus.length === 0 && (
+              {!isSearching && debouncedQuery && filteredResults.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
-                  No games found. Try a different search term.
+                  No games found{categoryFilter !== "all" || platformFilter !== "all" ? " matching filters" : ""}. Try a different search term.
                 </div>
               )}
 
-              {resultsWithCollectionStatus.map((game) => (
+              {filteredResults.map((game) => (
                 <Card
                   key={game.id}
                   className="hover-elevate"
@@ -414,12 +553,19 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2 mb-2">
-                          <h3
-                            className="font-semibold truncate"
-                            data-testid={`text-game-title-${game.id}`}
-                          >
-                            {game.title}
-                          </h3>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h3
+                              className="font-semibold truncate"
+                              data-testid={`text-game-title-${game.id}`}
+                            >
+                              {game.title}
+                            </h3>
+                            {game.igdbCategory != null && IGDB_CATEGORY_LABELS[game.igdbCategory] && (
+                              <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 shrink-0", IGDB_CATEGORY_COLORS[game.igdbCategory])}>
+                                {IGDB_CATEGORY_LABELS[game.igdbCategory]}
+                              </Badge>
+                            )}
+                          </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             {game.releaseDate && (
                               <div className="flex items-center gap-1 text-sm text-muted-foreground">

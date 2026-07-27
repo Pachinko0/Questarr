@@ -1944,10 +1944,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         ];
 
-        // Fetch IGDB expansions/DLCs/standalone expansions
+        // Fetch IGDB expansions/DLCs/standalone expansions + reverse parent_game lookup
         if (game.igdbId) {
           try {
-            const igdbGame = await igdbClient.getGameById(game.igdbId);
+            const [igdbGame, parentGames] = await Promise.all([
+              igdbClient.getGameById(game.igdbId),
+              igdbClient.getGamesByParentId(game.igdbId),
+            ]);
             const expansions = igdbGame?.expansions ?? [];
             const dlcs = igdbGame?.dlcs ?? [];
             const standalone = igdbGame?.standalone_expansions ?? [];
@@ -1955,10 +1958,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               (g) => g.category !== 10 && g.category !== 11
             );
             routesLogger.info(
-              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length, expanded: expandedGames.length, gameName: igdbGame?.name },
+              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length, expanded: expandedGames.length, parentGames: parentGames.length, gameName: igdbGame?.name },
               "IGDB content groups for game"
             );
-            const contentGroups = [...expansions, ...dlcs, ...standalone, ...expandedGames];
+            const contentGroups = [...expansions, ...dlcs, ...standalone, ...expandedGames, ...parentGames];
             const seen = new Set<number>();
             const sourceCategory = new Map<number, number>();
             for (const item of expansions) sourceCategory.set(item.id, 2);
