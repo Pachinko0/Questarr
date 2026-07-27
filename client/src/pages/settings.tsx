@@ -1968,6 +1968,41 @@ export default function SettingsPage() {
                 <div className="flex flex-col space-y-2">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
+                      <p className="text-sm font-medium">Refresh IGDB Data</p>
+                      <p className="text-xs text-muted-foreground">
+                        Clear the in-memory IGDB cache so the next lookup fetches fresh data
+                        (including expansions, DLCs, metadata).
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const res = await apiRequest("POST", "/api/igdb/clear-cache");
+                          const data = await res.json();
+                          toast({
+                            title: "IGDB Cache Cleared",
+                            description: `${data.cleared} cached entries cleared.`,
+                          });
+                        } catch (err) {
+                          toast({
+                            title: "Failed to clear IGDB cache",
+                            description: err instanceof Error ? err.message : "Unknown error",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                      className="gap-2 w-full sm:w-auto shrink-0"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      Clear IGDB Cache
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
                       <p className="text-sm font-medium">Refresh Metadata</p>
                       <p className="text-xs text-muted-foreground">
                         Update all games in your library with the latest information from IGDB.

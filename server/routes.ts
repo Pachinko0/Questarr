@@ -2118,6 +2118,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // Clear entire IGDB cache
+  app.post(
+    "/api/igdb/clear-cache",
+    authenticateToken,
+    async (_req: Request, res: Response) => {
+      const cleared = igdbClient.clearAllCache();
+      res.json({ success: true, cleared });
+    }
+  );
+
   // IGDB discovery routes
 
   // Search IGDB for games

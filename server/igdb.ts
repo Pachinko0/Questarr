@@ -1137,6 +1137,12 @@ class IGDBClient {
     }
     return cleared;
   }
+
+  clearAllCache(): number {
+    const count = this.cache.size;
+    this.cache.clear();
+    return count;
+  }
 }
 
 export const igdbClient = new IGDBClient();
