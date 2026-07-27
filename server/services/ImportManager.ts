@@ -8,8 +8,10 @@ import {
   ImportReview,
   PCImportStrategy,
   sanitizeFsName,
+  type FileCategoryEntry,
 } from "./ImportStrategies.js";
 import { DownloaderManager } from "../downloaders.js";
+import { igdbClient } from "../igdb.js";
 import fs from "fs-extra";
 import path from "node:path";
 import { parseReleaseMetadata } from "../../shared/title-utils.js";
@@ -410,6 +412,29 @@ export class ImportManager {
 
       if (plan.fileCategories && plan.fileCategories.length > 0) {
         const gameDir = result.destDir;
+
+        // Try to match download title against IGDB content items
+        let contentMatchId: number | undefined;
+        if (game.igdbId && download.downloadTitle) {
+          try {
+            const igdbGame = await igdbClient.getGameById(game.igdbId);
+            const allContent = [
+              ...(igdbGame?.expansions ?? []),
+              ...(igdbGame?.dlcs ?? []),
+              ...(igdbGame?.standalone_expansions ?? []),
+            ];
+            const titleLower = download.downloadTitle.toLowerCase();
+            for (const item of allContent) {
+              if (titleLower.includes(item.name.toLowerCase())) {
+                contentMatchId = item.id;
+                break;
+              }
+            }
+          } catch {
+            // IGDB unavailable, proceed without content matching
+          }
+        }
+
         const files: InsertGameFile[] = await Promise.all(
           plan.fileCategories.map(async (fc) => {
             const filePath = path.join(
@@ -431,6 +456,7 @@ export class ImportManager {
               category: fc.category,
               filePath,
               fileSize,
+              igdbContentId: fc.igdbContentId ?? contentMatchId,
             };
           })
         );
@@ -523,10 +549,38 @@ export class ImportManager {
             })
           : files;
 
+        // Try to match download title against IGDB content items
+        let contentMatch: { igdbContentId: number; contentName: string } | null = null;
+        if (game.igdbId && download.downloadTitle) {
+          try {
+            const igdbGame = await igdbClient.getGameById(game.igdbId);
+            const allContent = [
+              ...(igdbGame?.expansions ?? []),
+              ...(igdbGame?.dlcs ?? []),
+              ...(igdbGame?.standalone_expansions ?? []),
+            ];
+            if (allContent.length > 0) {
+              const titleLower = download.downloadTitle.toLowerCase();
+              for (const item of allContent) {
+                if (titleLower.includes(item.name.toLowerCase())) {
+                  contentMatch = { igdbContentId: item.id, contentName: item.name };
+                  break;
+                }
+              }
+            }
+          } catch {
+            // IGDB unavailable
+          }
+        }
+
         return {
           originalPath: resolvedOriginalPath,
           proposedPath: plan.proposedPath,
-          files: filesWithCategories,
+          files: filesWithCategories.map((f) => ({
+            ...f,
+            suggestedContentId: contentMatch?.igdbContentId,
+            suggestedContentName: contentMatch?.contentName,
+          })),
           hasArchive,
           totalCount,
         };
@@ -639,6 +693,7 @@ export class ImportManager {
               category: fc.category,
               filePath,
               fileSize,
+              igdbContentId: (fc as FileCategoryEntry).igdbContentId,
             };
           })
         );

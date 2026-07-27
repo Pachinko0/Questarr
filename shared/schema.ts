@@ -833,6 +833,7 @@ export const gameFiles = sqliteTable(
     category: text("category").notNull().$type<"main" | "dlc" | "update" | "extra">(),
     filePath: text("file_path").notNull(),
     fileSize: integer("file_size"),
+    igdbContentId: integer("igdb_content_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
       sql`(strftime('%s', 'now') * 1000)`
     ),

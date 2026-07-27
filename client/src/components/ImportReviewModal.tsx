@@ -64,7 +64,7 @@ export default function ImportReviewModal({
     ? `/api/imports/${downloadId}/plan?sourcePath=${encodeURIComponent(sourcePath)}`
     : `/api/imports/${downloadId}/plan`;
 
-  type PlanFile = { name: string; isArchive: boolean; category?: string };
+  type PlanFile = { name: string; isArchive: boolean; category?: string; suggestedContentId?: number; suggestedContentName?: string };
 
   const { data: planData } = useQuery<{
     originalPath: string;
@@ -121,9 +121,11 @@ export default function ImportReviewModal({
 
   const confirmMutation = useMutation({
     mutationFn: async () => {
+      const contentId = planData?.files?.[0]?.suggestedContentId;
       const fileCatEntries = Object.keys(fileCategories).map((name) => ({
         name,
         category: fileCategories[name],
+        ...(contentId ? { igdbContentId: contentId } : {}),
       }));
       await apiRequest("POST", `/api/imports/${downloadId}/confirm`, {
         strategy,
@@ -252,21 +254,28 @@ export default function ImportReviewModal({
                           {f.name}
                         </span>
                         {importConfig?.sortExtras && !f.isArchive && (
-                          <select
-                            className="ml-auto shrink-0 text-[10px] rounded border border-border bg-background px-1 py-0.5"
-                            value={fileCategories[f.name] ?? f.category ?? "main"}
-                            onChange={(e) =>
-                              setFileCategories((prev) => ({
-                                ...prev,
-                                [f.name]: e.target.value,
-                              }))
-                            }
-                          >
-                            <option value="main">Main</option>
-                            <option value="dlc">DLC</option>
-                            <option value="update">Update</option>
-                            <option value="extra">Extra</option>
-                          </select>
+                          <div className="ml-auto shrink-0 flex items-center gap-1">
+                            {f.suggestedContentName && !f.isArchive && (
+                              <span className="text-[10px] text-muted-foreground truncate max-w-[100px]" title={f.suggestedContentName}>
+                                {f.suggestedContentName}
+                              </span>
+                            )}
+                            <select
+                              className="shrink-0 text-[10px] rounded border border-border bg-background px-1 py-0.5"
+                              value={fileCategories[f.name] ?? f.category ?? "main"}
+                              onChange={(e) =>
+                                setFileCategories((prev) => ({
+                                  ...prev,
+                                  [f.name]: e.target.value,
+                                }))
+                              }
+                            >
+                              <option value="main">Main</option>
+                              <option value="dlc">DLC</option>
+                              <option value="update">Update</option>
+                              <option value="extra">Extra</option>
+                            </select>
+                          </div>
                         )}
                       </div>
                     ))}

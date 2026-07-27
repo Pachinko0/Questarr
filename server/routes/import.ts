@@ -490,6 +490,7 @@ importRouter.post("/:id/confirm", async (req, res) => {
           z.object({
             name: z.string().min(1),
             category: z.enum(["main", "dlc", "update", "extra"]),
+            igdbContentId: z.number().int().optional(),
           })
         )
         .optional(),

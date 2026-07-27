@@ -1858,7 +1858,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const existingGame = userGames.find((g) => g.igdbId === item.id);
               const itemCategory =
                 item.category === 1 || item.category === 2 ? "dlc" : "update";
-              const expFiles = gameFiles.filter((f) => f.category === itemCategory);
+              const expFiles = gameFiles.filter(
+                (f) =>
+                  (f.igdbContentId != null
+                    ? f.igdbContentId === item.id
+                    : f.category === itemCategory)
+              );
               slots.push({
                 category: itemCategory,
                 label: item.name,

@@ -1321,6 +1321,7 @@ export class MemStorage implements IStorage {
       category: file.category as GameFile["category"],
       filePath: file.filePath,
       fileSize: file.fileSize ?? null,
+      igdbContentId: file.igdbContentId ?? null,
       createdAt: new Date(),
     };
     this.gameFiles.set(id, gf);

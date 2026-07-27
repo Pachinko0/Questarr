@@ -24,6 +24,7 @@ export interface ImportResult {
 export interface FileCategoryEntry {
   name: string;
   category: DownloadCategory;
+  igdbContentId?: number;
 }
 
 export interface ImportReview {
