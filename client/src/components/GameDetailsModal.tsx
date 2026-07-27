@@ -110,6 +110,24 @@ type ContentSlot = {
   rating?: number | null;
   aggregatedRating?: number | null;
   releaseDate?: number | null;
+  igdbCategory?: number | null;
+};
+
+const IGDB_CATEGORY_LABELS: Record<number, string> = {
+  0: "Main Game",
+  1: "DLC",
+  2: "Expansion",
+  3: "Bundle",
+  4: "Standalone",
+  5: "Mod",
+  6: "Episode",
+  7: "Season",
+  8: "Remake",
+  9: "Remaster",
+  10: "Expanded Game",
+  11: "Port",
+  12: "Fork",
+  13: "Pack",
 };
 
 interface GameDetailsModalProps {
@@ -1297,6 +1315,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                               />
                             )}
                             <h4 className="text-sm font-semibold truncate">{slot.label}</h4>
+                            {slot.igdbCategory != null && IGDB_CATEGORY_LABELS[slot.igdbCategory] && (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 text-muted-foreground">
+                                {IGDB_CATEGORY_LABELS[slot.igdbCategory]}
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             {slot.igdbId != null && slot.gameId != null && (

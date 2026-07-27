@@ -1925,6 +1925,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rating?: number | null;
           aggregatedRating?: number | null;
           releaseDate?: number | null;
+          igdbCategory?: number | null;
         }> = [
           {
             category: "main",
@@ -1959,7 +1960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               seen.add(item.id);
               const existingGame = userGames.find((g) => g.igdbId === item.id);
               const itemCategory =
-                item.category === 1 || item.category === 2 ? "dlc" : "update";
+                item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
               const expFiles = gameFiles.filter(
                 (f) =>
                   (f.igdbContentId != null
@@ -1985,6 +1986,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               rating: item.rating ?? null,
               aggregatedRating: item.aggregated_rating ?? null,
               releaseDate: item.first_release_date ?? null,
+              igdbCategory: item.category ?? null,
               });
             }
             if (seen.size === 0) {
