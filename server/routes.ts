@@ -2118,7 +2118,7 @@ fileSize: f.fileSize,
     }
   );
 
-  // Unlink a game file from its IGDB content (clears igdbContentId without deleting the file)
+  // Unlink a game file from its content (removes the file record without deleting the file on disk)
   app.patch(
     "/api/game-files/:id/unlink",
     authenticateToken,
@@ -2129,11 +2129,11 @@ fileSize: f.fileSize,
         if (!file) {
           return res.status(404).json({ error: "Game file not found" });
         }
-        const updated = await storage.updateGameFile(id, { igdbContentId: null });
-        if (!updated) {
+        const deleted = await storage.removeGameFile(id);
+        if (!deleted) {
           return res.status(500).json({ error: "Failed to unlink game file" });
         }
-        res.json({ success: true, file: updated });
+        res.json({ success: true });
       } catch (error) {
         routesLogger.error({ error }, "error unlinking game file");
         res.status(500).json({ error: "Failed to unlink game file" });
