@@ -66,6 +66,7 @@ import {
   ChevronRight,
   Upload,
   Scan,
+  Play,
 } from "lucide-react";
 import { FaSteam, FaRedditAlien, FaDiscord, FaWikipediaW, FaTwitch } from "react-icons/fa";
 import {
@@ -1331,7 +1332,28 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
           className="flex-1 min-h-0 data-[state=inactive]:hidden"
         >
           <ScrollArea className="h-full">
-            <div className="pr-4 pb-2">
+            <div className="pr-4 pb-2 space-y-6">
+              {game.videos && game.videos.length > 0 && (
+                <div>
+                  <h3 className="font-semibold mb-3 flex items-center gap-2">
+                    <Play className="w-4 h-4" />
+                    Trailers
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {game.videos.map((video, index) => (
+                      <div key={index} className="aspect-video rounded-xl overflow-hidden bg-black">
+                        <iframe
+                          src={`https://www.youtube.com/embed/${video.videoId}`}
+                          title={video.name || `Trailer ${index + 1}`}
+                          className="w-full h-full"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {game.screenshots && game.screenshots.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {game.screenshots.map((screenshot, index) => (

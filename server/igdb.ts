@@ -15,7 +15,7 @@ export const IGDB_EARLY_ACCESS_STATUS = 4;
 
 // Shared field list for all IGDB game queries
 const IGDB_GAME_FIELDS =
-  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, themes.name, age_ratings.category, age_ratings.rating, screenshots.url, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status, category, expansions.name, expansions.summary, expansions.cover.url, expansions.first_release_date, expansions.rating, expansions.aggregated_rating, expansions.category, dlcs.name, dlcs.summary, dlcs.cover.url, dlcs.first_release_date, dlcs.rating, dlcs.aggregated_rating, dlcs.category, standalone_expansions.name, standalone_expansions.summary, standalone_expansions.cover.url, standalone_expansions.first_release_date, standalone_expansions.rating, standalone_expansions.aggregated_rating, standalone_expansions.category, expanded_games.name, expanded_games.summary, expanded_games.cover.url, expanded_games.first_release_date, expanded_games.rating, expanded_games.aggregated_rating, expanded_games.category";
+  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, themes.name, age_ratings.category, age_ratings.rating, screenshots.url, videos.video_id, videos.name, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status, category, expansions.name, expansions.summary, expansions.cover.url, expansions.first_release_date, expansions.rating, expansions.aggregated_rating, expansions.category, dlcs.name, dlcs.summary, dlcs.cover.url, dlcs.first_release_date, dlcs.rating, dlcs.aggregated_rating, dlcs.category, standalone_expansions.name, standalone_expansions.summary, standalone_expansions.cover.url, standalone_expansions.first_release_date, standalone_expansions.rating, standalone_expansions.aggregated_rating, standalone_expansions.category, expanded_games.name, expanded_games.summary, expanded_games.cover.url, expanded_games.first_release_date, expanded_games.rating, expanded_games.aggregated_rating, expanded_games.category";
 
 // IGDB theme name flagged as adult content (Erotic)
 const ADULT_THEME_NAMES = new Set(["Erotic"]);
@@ -69,6 +69,10 @@ export interface IGDBGame {
   screenshots?: Array<{
     id: number;
     url: string;
+  }>;
+  videos?: Array<{
+    video_id: string;
+    name: string;
   }>;
   websites?: Array<{
     category: number;
@@ -1158,6 +1162,8 @@ class IGDBClient {
       screenshots:
         igdbGame.screenshots?.map((s) => `https:${s.url.replace("t_thumb", "t_screenshot_big")}`) ||
         [],
+      videos:
+        igdbGame.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [],
       igdbWebsites: igdbWebsiteSchema
         .array()
         .catch([])

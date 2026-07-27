@@ -477,6 +477,7 @@ export class MemStorage implements IStorage {
       publishers: insertGame.publishers || null,
       developers: insertGame.developers || null,
       screenshots: insertGame.screenshots || null,
+      videos: insertGame.videos || null,
       igdbId: insertGame.igdbId || null,
       steamAppId: insertGame.steamAppId || null,
       source: insertGame.source ?? null,

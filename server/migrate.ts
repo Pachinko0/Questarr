@@ -66,6 +66,8 @@ const REPAIRS_V1_3_0: Record<string, TableRepair> = {
       { name: "aggregated_rating", definition: "real" },
       // 0012 – user rating
       { name: "user_rating", definition: "real" },
+      // IGDB videos (YouTube video IDs)
+      { name: "videos", definition: "text" },
     ],
   },
   game_downloads: {
