@@ -1455,7 +1455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check library health: drifted libraryPaths and orphaned folders on disk
+  // Check library health: drifted paths, orphaned folders, and backfill game_files
   app.post("/api/games/library-health-check", sensitiveEndpointLimiter, async (req, res) => {
     try {
       const userId = req.user!.id;
@@ -1463,6 +1463,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const config = await storage.getImportConfig(userId);
       const resolvedRoot = path.resolve(config.libraryRoot);
 
+      // 1. Drifted — games with a libraryPath that no longer exists on disk
       const gamesWithPath = userGames.filter(
         (g): g is typeof g & { libraryPath: string } => !!g.libraryPath
       );
@@ -1476,6 +1477,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter(({ exists }) => !exists)
         .map(({ game }) => ({ id: game.id, title: game.title, libraryPath: game.libraryPath }));
 
+      // 2. Orphaned — folders in the library root with no matching game
       const knownPaths = new Set(gamesWithPath.map((g) => path.resolve(g.libraryPath)));
       const orphaned: Array<{ path: string }> = [];
 
@@ -1511,7 +1513,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      res.json({ drifted, orphaned, libraryRoot: resolvedRoot });
+      // 3. Backfill — create game_files records for games without them
+      const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
+      let backfilledGames = 0;
+      let backfilledFiles = 0;
+
+      for (const game of userGames) {
+        const existing = await storage.getGameFiles(game.id);
+        if (existing.length > 0) continue;
+        if (!game.libraryPath) continue;
+
+        const gameDir = path.resolve(game.libraryPath);
+        let entries: string[];
+        try {
+          entries = await fs.promises.readdir(gameDir);
+        } catch {
+          continue;
+        }
+
+        const files: Array<{
+          name: string;
+          category: "main" | "dlc" | "update" | "extra";
+          filePath: string;
+        }> = [];
+
+        for (const entry of entries) {
+          const fullPath = path.join(gameDir, entry);
+          let stat: fs.Stats;
+          try {
+            stat = await fs.promises.stat(fullPath);
+          } catch {
+            continue;
+          }
+
+          const lowerName = entry.toLowerCase();
+          if (stat.isDirectory() && CATEGORY_SUBDIRS.has(lowerName)) {
+            let subEntries: string[];
+            try {
+              subEntries = await fs.promises.readdir(fullPath);
+            } catch {
+              continue;
+            }
+            for (const sub of subEntries) {
+              const subFullPath = path.join(fullPath, sub);
+              try {
+                await fs.promises.stat(subFullPath);
+                files.push({
+                  name: sub,
+                  category: lowerName as "dlc" | "update" | "extra",
+                  filePath: subFullPath,
+                });
+              } catch {
+                continue;
+              }
+            }
+          } else if (!stat.isDirectory()) {
+            const nameWithoutExt = path.parse(entry).name;
+            const { category } = categorizeDownload(nameWithoutExt);
+            files.push({
+              name: entry,
+              category: category as "main" | "dlc" | "update" | "extra",
+              filePath: fullPath,
+            });
+          }
+        }
+
+        if (files.length > 0) {
+          const gameFiles: InsertGameFile[] = await Promise.all(
+            files.map(async (f) => {
+              let fileSize: number | null = null;
+              try {
+                const fStat = await fs.promises.stat(f.filePath);
+                fileSize = fStat.size;
+              } catch {
+                // ignore
+              }
+              return {
+                gameId: game.id,
+                downloadId: null,
+                originalName: f.name,
+                storedName: f.name,
+                category: f.category,
+                filePath: f.filePath,
+                fileSize,
+              };
+            })
+          );
+          await storage.addGameFilesBatch(gameFiles);
+          backfilledFiles += gameFiles.length;
+          backfilledGames++;
+        }
+      }
+
+      if (backfilledGames > 0) {
+        routesLogger.info({ backfilledGames, backfilledFiles }, "Library health check backfilled game_files");
+      }
+
+      res.json({ drifted, orphaned, libraryRoot: resolvedRoot, backfilledGames, backfilledFiles });
     } catch (error) {
       routesLogger.error({ error }, "error running library health check");
       res.status(500).json({ error: "Failed to run library health check" });
@@ -2003,115 +2101,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         routesLogger.error({ error }, "error deleting game files");
         res.status(500).json({ error: "Failed to delete game files" });
-      }
-    }
-  );
-
-  // Backfill game_files for games imported before the game_files table existed
-  app.post(
-    "/api/games/backfill-game-files",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const userId = req.user!.id;
-        const games = await storage.getUserGames(userId, true);
-        const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
-        let totalFiles = 0;
-        let processedGames = 0;
-
-        for (const game of games) {
-          const existing = await storage.getGameFiles(game.id);
-          if (existing.length > 0) continue;
-
-          if (!game.libraryPath) continue;
-
-          const gameDir = path.resolve(game.libraryPath);
-          let entries: string[];
-          try {
-            entries = await fs.promises.readdir(gameDir);
-          } catch {
-            continue;
-          }
-
-          const files: Array<{
-            name: string;
-            category: "main" | "dlc" | "update" | "extra";
-            filePath: string;
-          }> = [];
-
-          for (const entry of entries) {
-            const fullPath = path.join(gameDir, entry);
-            let stat: fs.Stats;
-            try {
-              stat = await fs.promises.stat(fullPath);
-            } catch {
-              continue;
-            }
-
-            const lowerName = entry.toLowerCase();
-            if (stat.isDirectory() && CATEGORY_SUBDIRS.has(lowerName)) {
-              let subEntries: string[];
-              try {
-                subEntries = await fs.promises.readdir(fullPath);
-              } catch {
-                continue;
-              }
-              for (const sub of subEntries) {
-                const subFullPath = path.join(fullPath, sub);
-                try {
-                  await fs.promises.stat(subFullPath);
-                  files.push({
-                    name: sub,
-                    category: lowerName as "dlc" | "update" | "extra",
-                    filePath: subFullPath,
-                  });
-                } catch {
-                  continue;
-                }
-              }
-            } else if (!stat.isDirectory()) {
-              const nameWithoutExt = path.parse(entry).name;
-              const { category } = categorizeDownload(nameWithoutExt);
-              files.push({
-                name: entry,
-                category: category as "main" | "dlc" | "update" | "extra",
-                filePath: fullPath,
-              });
-            }
-          }
-
-          if (files.length > 0) {
-            const gameFiles: InsertGameFile[] = await Promise.all(
-              files.map(async (f) => {
-                let fileSize: number | null = null;
-                try {
-                  const fStat = await fs.promises.stat(f.filePath);
-                  fileSize = fStat.size;
-                } catch {
-                  // ignore
-                }
-                return {
-                  gameId: game.id,
-                  downloadId: null,
-                  originalName: f.name,
-                  storedName: f.name,
-                  category: f.category,
-                  filePath: f.filePath,
-                  fileSize,
-                };
-              })
-            );
-            await storage.addGameFilesBatch(gameFiles);
-            totalFiles += gameFiles.length;
-            processedGames++;
-          }
-        }
-
-        routesLogger.info({ processedGames, totalFiles }, "Game files backfill complete");
-        res.json({ success: true, processedGames, totalFiles });
-      } catch (error) {
-        routesLogger.error({ error }, "error backfilling game files");
-        res.status(500).json({ error: "Failed to backfill game files" });
       }
     }
   );

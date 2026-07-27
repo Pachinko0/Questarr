@@ -302,6 +302,7 @@ export interface IStorage {
   getGameFile(id: string): Promise<GameFile | undefined>;
   getGameFiles(gameId: string): Promise<GameFile[]>;
   getGameFilesByDownload(downloadId: string): Promise<GameFile[]>;
+  getGameFilesByGameIds(gameIds: string[]): Promise<Map<string, GameFile[]>>;
   addGameFile(file: InsertGameFile): Promise<GameFile>;
   addGameFilesBatch(files: InsertGameFile[]): Promise<GameFile[]>;
   removeGameFile(id: string): Promise<boolean>;
@@ -1308,6 +1309,18 @@ export class MemStorage implements IStorage {
 
   async getGameFilesByDownload(downloadId: string): Promise<GameFile[]> {
     return Array.from(this.gameFiles.values()).filter((f) => f.downloadId === downloadId);
+  }
+
+  async getGameFilesByGameIds(gameIds: string[]): Promise<Map<string, GameFile[]>> {
+    const map = new Map<string, GameFile[]>();
+    for (const [id, f] of this.gameFiles) {
+      if (gameIds.includes(f.gameId)) {
+        const arr = map.get(f.gameId) ?? [];
+        arr.push(f);
+        map.set(f.gameId, arr);
+      }
+    }
+    return map;
   }
 
   async addGameFile(file: InsertGameFile): Promise<GameFile> {
@@ -2434,6 +2447,18 @@ export class DatabaseStorage implements IStorage {
 
   async getGameFilesByDownload(downloadId: string): Promise<GameFile[]> {
     return db.select().from(gameFiles).where(eq(gameFiles.downloadId, downloadId));
+  }
+
+  async getGameFilesByGameIds(gameIds: string[]): Promise<Map<string, GameFile[]>> {
+    if (gameIds.length === 0) return new Map();
+    const rows = await db.select().from(gameFiles).where(inArray(gameFiles.gameId, gameIds));
+    const map = new Map<string, GameFile[]>();
+    for (const f of rows) {
+      const arr = map.get(f.gameId) ?? [];
+      arr.push(f);
+      map.set(f.gameId, arr);
+    }
+    return map;
   }
 
   async addGameFile(file: InsertGameFile): Promise<GameFile> {

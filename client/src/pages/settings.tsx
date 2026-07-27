@@ -664,6 +664,8 @@ export default function SettingsPage() {
   const [libraryHealthResult, setLibraryHealthResult] = useState<{
     drifted: Array<{ id: string; title: string; libraryPath: string }>;
     orphaned: Array<{ path: string }>;
+    backfilledGames?: number;
+    backfilledFiles?: number;
   } | null>(null);
 
   const libraryHealthMutation = useMutation({
@@ -672,13 +674,14 @@ export default function SettingsPage() {
       return res.json();
     },
     onSuccess: (data) => {
-      setLibraryHealthResult({ drifted: data.drifted, orphaned: data.orphaned });
+      setLibraryHealthResult({ drifted: data.drifted, orphaned: data.orphaned, backfilledGames: data.backfilledGames, backfilledFiles: data.backfilledFiles });
+      const parts: string[] = [];
+      if (data.drifted.length > 0) parts.push(`${data.drifted.length} drifted`);
+      if (data.orphaned.length > 0) parts.push(`${data.orphaned.length} orphaned`);
+      if (data.backfilledGames > 0) parts.push(`${data.backfilledGames} games backfilled (${data.backfilledFiles} files)`);
       toast({
         title: "Library Health Check",
-        description:
-          data.drifted.length === 0 && data.orphaned.length === 0
-            ? "Library is in sync."
-            : `${data.drifted.length} drifted, ${data.orphaned.length} orphaned`,
+        description: parts.length > 0 ? parts.join(", ") : "Library is in sync.",
       });
     },
     onError: (error: Error) => {
@@ -1991,8 +1994,8 @@ export default function SettingsPage() {
                     <div>
                       <p className="text-sm font-medium">Check Library Health</p>
                       <p className="text-xs text-muted-foreground">
-                        Find games whose library files have gone missing, and library folders that
-                        no longer match any game.
+                        Find games whose library files have gone missing, library folders that
+                        no longer match any game, and backfill file tracking for old imports.
                       </p>
                     </div>
                     <Button
@@ -2012,8 +2015,19 @@ export default function SettingsPage() {
                   </div>
                   {libraryHealthResult &&
                     (libraryHealthResult.drifted.length > 0 ||
-                      libraryHealthResult.orphaned.length > 0) && (
+                      libraryHealthResult.orphaned.length > 0 ||
+                      (libraryHealthResult.backfilledGames ?? 0) > 0) && (
                       <div className="mt-2 space-y-3 rounded-md border border-border p-3 text-xs">
+                        {libraryHealthResult.backfilledGames != null && libraryHealthResult.backfilledGames > 0 && (
+                          <div>
+                            <p className="font-medium text-green-500">
+                              Backfilled ({libraryHealthResult.backfilledFiles} files across {libraryHealthResult.backfilledGames} games)
+                            </p>
+                            <p className="mt-1 text-muted-foreground">
+                              File tracking records created for old imports.
+                            </p>
+                          </div>
+                        )}
                         {libraryHealthResult.drifted.length > 0 && (
                           <div>
                             <p className="font-medium text-amber-500">
