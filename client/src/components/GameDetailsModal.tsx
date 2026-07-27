@@ -1881,7 +1881,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       ) : (
         <Dialog open={open} onOpenChange={onOpenChange}>
           <DialogContent
-            className="max-w-4xl max-h-[95svh] sm:max-h-[90vh] flex flex-col overflow-hidden"
+            className="max-w-4xl h-[95svh] sm:h-[90vh] max-h-[95svh] sm:max-h-[90vh] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {detailsBody}
