@@ -2166,6 +2166,119 @@ fileSize: f.fileSize,
     }
   );
 
+  // Scan a folder for manual import (lists files with metadata)
+  app.post(
+    "/api/import/manual/scan",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const { path: scanPath } = req.body;
+        if (!scanPath || typeof scanPath !== "string") {
+          return res.status(400).json({ error: "path is required" });
+        }
+
+        if (!fs.existsSync(scanPath)) {
+          return res.status(400).json({ error: "Path does not exist" });
+        }
+
+        const stats = await fs.promises.stat(scanPath);
+        let files: Array<{ name: string; path: string; size: number; isDirectory: boolean }> = [];
+
+        if (stats.isDirectory()) {
+          const entries = await fs.promises.readdir(scanPath);
+          for (const entry of entries) {
+            const entryPath = `${scanPath}/${entry}`;
+            try {
+              const entryStats = await fs.promises.stat(entryPath);
+              files.push({ name: entry, path: entryPath, size: entryStats.size, isDirectory: entryStats.isDirectory() });
+            } catch { /* skip unreadable */ }
+          }
+        } else {
+          files.push({ name: path.basename(scanPath), path: scanPath, size: stats.size, isDirectory: false });
+        }
+
+        // Filter out directories and non-media files
+        const mediaExtensions = new Set([".iso", ".bin", ".cue", ".gdi", ".chd", ".rvz", ".wbfs", ".wad", ".nsp", ".xci", ".nca", ".pkg", ".pup", ".zip", ".rar", ".7z", ".tar", ".gz"]);
+        files = files.filter((f) => !f.isDirectory && mediaExtensions.has(path.extname(f.name).toLowerCase()));
+
+        res.json({ files });
+      } catch (error) {
+        routesLogger.error({ error }, "error scanning for manual import");
+        res.status(500).json({ error: "Failed to scan path" });
+      }
+    }
+  );
+
+  // Execute manual import for a list of files
+  app.post(
+    "/api/import/manual/execute",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const { imports } = req.body;
+        if (!Array.isArray(imports) || imports.length === 0) {
+          return res.status(400).json({ error: "imports array is required" });
+        }
+
+        const userId = req.user!.id;
+        const results: Array<{ filePath: string; success: boolean; error?: string }> = [];
+
+        for (const item of imports) {
+          const { filePath, gameId, category } = item;
+
+          if (!filePath || !gameId || !category) {
+            results.push({ filePath, success: false, error: "Missing required fields (filePath, gameId, category)" });
+            continue;
+          }
+
+          if (!["main", "dlc", "update", "extra"].includes(category)) {
+            results.push({ filePath, success: false, error: "Invalid category" });
+            continue;
+          }
+
+          try {
+            if (!fs.existsSync(filePath)) {
+              results.push({ filePath, success: false, error: "File does not exist" });
+              continue;
+            }
+
+            const game = await resolveOwnedGame(gameId, userId, res);
+            if (!game) {
+              results.push({ filePath, success: false, error: "Game not found or not owned" });
+              continue;
+            }
+
+            const result = await importManager.manualImportFile(filePath, game, category);
+
+            const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
+            await storage.addGameFile({
+              gameId: game.id,
+              originalName,
+              storedName: originalName,
+              category,
+              filePath: result.newPath,
+              fileSize: result.fileSize,
+            });
+
+            await storage.updateGame(game.id, { libraryPath: result.destDir });
+            if (game.status !== "owned") {
+              await storage.updateGameStatus(game.id, { status: "owned" });
+            }
+
+            results.push({ filePath, success: true });
+          } catch (err) {
+            results.push({ filePath, success: false, error: (err as Error).message });
+          }
+        }
+
+        res.json({ results });
+      } catch (error) {
+        routesLogger.error({ error }, "error executing manual import");
+        res.status(500).json({ error: "Failed to execute manual import" });
+      }
+    }
+  );
+
   // Delete a game file record
   app.delete(
     "/api/game-files/:id",

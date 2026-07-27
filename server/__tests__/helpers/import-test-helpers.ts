@@ -35,6 +35,7 @@ export function makeGame(overrides: Partial<Game> = {}): Game {
     earlyAccess: false,
     userRating: null,
     searchResultsAvailable: false,
+    videos: null,
     ...overrides,
   };
 }

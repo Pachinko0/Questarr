@@ -39,6 +39,7 @@ import {
   Search,
   X,
   ArrowUp,
+  Upload,
   CheckCircle2,
   AlertCircle,
 } from "lucide-react";
@@ -59,6 +60,7 @@ import { useToast } from "@/hooks/use-toast";
 import DownloadDetailsModal from "@/components/DownloadDetailsModal";
 const ClaimDownloadModal = lazy(() => import("@/components/ClaimDownloadModal"));
 const ClaimBatchModal = lazy(() => import("@/components/ClaimBatchModal"));
+const ManualImportModal = lazy(() => import("@/components/ManualImportModal"));
 
 interface DownloadStatus {
   id: string;
@@ -137,6 +139,7 @@ export default function Downloads() {
   const [searchQuery, setSearchQuery] = useState("");
   const [claimTarget, setClaimTarget] = useState<DownloadStatus | null>(null);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [manualImportOpen, setManualImportOpen] = useState(false);
 
   const {
     data: downloadsData,
@@ -420,6 +423,16 @@ export default function Downloads() {
             Monitor and manage active downloads
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setManualImportOpen(true)}
+          className="mr-2"
+          aria-label="Manual import"
+        >
+          <Upload className="h-4 w-4 md:mr-2" />
+          <span className="hidden md:inline">Manual Import</span>
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -975,6 +988,11 @@ export default function Downloads() {
       {/* Batch Scan Modal */}
       <Suspense fallback={<div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />}>
         <ClaimBatchModal open={batchModalOpen} onOpenChange={setBatchModalOpen} />
+      </Suspense>
+
+      {/* Manual Import Modal */}
+      <Suspense fallback={<div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />}>
+        <ManualImportModal open={manualImportOpen} onOpenChange={setManualImportOpen} />
       </Suspense>
     </div>
   );
