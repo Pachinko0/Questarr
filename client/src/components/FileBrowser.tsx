@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Folder, File, ChevronRight, CornerLeftUp, Loader2, HardDrive } from "lucide-react";
+import { Folder, File, ChevronRight, CornerLeftUp, Loader2, HardDrive, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -45,11 +45,22 @@ export function FileBrowser({
   root,
   mode = "folder",
 }: Readonly<FileBrowserProps>) {
-  const [currentPath, setCurrentPath] = useState(initialPath);
+  const [currentPath, setCurrentPath] = useState(() => {
+    if (open) {
+      try { return localStorage.getItem("fileBrowserLastPath") || initialPath; } catch { return initialPath; }
+    }
+    return initialPath;
+  });
+  const [recentPaths, setRecentPaths] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("fileBrowserRecentPaths");
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [data, setData] = useState<BrowseResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const loadPath = useCallback(
     async (p: string, attemptFallback: boolean = true) => {
       setLoading(true);
@@ -92,7 +103,12 @@ export function FileBrowser({
 
   useEffect(() => {
     if (open) {
-      setCurrentPath(initialPath);
+      try {
+        const stored = localStorage.getItem("fileBrowserLastPath");
+        setCurrentPath(stored || initialPath);
+      } catch {
+        setCurrentPath(initialPath);
+      }
       setSelectedFile(null);
     }
   }, [open, initialPath]);
@@ -201,6 +217,23 @@ export function FileBrowser({
           </Button>
         </div>
 
+        {recentPaths.length > 0 && (
+          <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+            {recentPaths.slice(0, 5).map((p) => (
+              <button
+                key={p}
+                type="button"
+                className="text-xs px-2 py-0.5 rounded-md bg-muted hover:bg-accent text-muted-foreground hover:text-foreground truncate max-w-[160px] shrink-0 transition-colors"
+                onClick={() => handleNavigate(p)}
+                title={p}
+              >
+                {p.split("/").filter(Boolean).pop() || "/"}
+              </button>
+            ))}
+          </div>
+        )}
+
         <ScrollArea className="flex-1 border rounded-md">{scrollContent}</ScrollArea>
 
         <div className="flex justify-end pt-4 gap-2">
@@ -209,11 +242,16 @@ export function FileBrowser({
           </Button>
           <Button
             onClick={() => {
-              if (mode === "file" && selectedFile) {
-                onSelect(selectedFile);
-              } else {
-                onSelect(currentPath);
-              }
+              const selectedPath = mode === "file" && selectedFile ? selectedFile : currentPath;
+              try {
+                localStorage.setItem("fileBrowserLastPath", currentPath);
+                const stored = localStorage.getItem("fileBrowserRecentPaths");
+                const paths: string[] = stored ? JSON.parse(stored) : [];
+                const next = [currentPath, ...paths.filter((p) => p !== currentPath)].slice(0, 10);
+                localStorage.setItem("fileBrowserRecentPaths", JSON.stringify(next));
+                setRecentPaths(next);
+              } catch { /* localStorage not available */ }
+              onSelect(selectedPath);
               onOpenChange(false);
             }}
             disabled={mode === "file" && !selectedFile}
