@@ -2129,7 +2129,7 @@ fileSize: f.fileSize,
         if (!file) {
           return res.status(404).json({ error: "Game file not found" });
         }
-        const updated = await storage.updateGameFile(id, { igdbContentId: null, category: "extra" });
+        const updated = await storage.updateGameFile(id, { igdbContentId: null });
         if (!updated) {
           return res.status(500).json({ error: "Failed to unlink game file" });
         }
