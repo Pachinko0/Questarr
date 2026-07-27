@@ -107,6 +107,9 @@ type ContentSlot = {
   coverUrl?: string | null;
   gameId?: string;
   summary?: string | null;
+  rating?: number | null;
+  aggregatedRating?: number | null;
+  releaseDate?: number | null;
 };
 
 interface GameDetailsModalProps {
@@ -1354,6 +1357,28 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                               >
                                 {expandedContentSummaries.has(slot.category) ? "Show less" : "Show more"}
                               </button>
+                            )}
+                          </div>
+                        )}
+                        {(slot.releaseDate != null || slot.rating != null || slot.aggregatedRating != null) && (
+                          <div className="flex items-center gap-4 mb-2 text-xs text-muted-foreground">
+                            {slot.releaseDate != null && (
+                              <span className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                {new Date(slot.releaseDate * 1000).toLocaleDateString()}
+                              </span>
+                            )}
+                            {slot.rating != null && (
+                              <span className="flex items-center gap-1">
+                                <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                                {Math.round(slot.rating / 10)}/10
+                              </span>
+                            )}
+                            {slot.aggregatedRating != null && (
+                              <span className="flex items-center gap-1 text-slate-500">
+                                <TrendingUp className="h-3 w-3" />
+                                {Math.round(slot.aggregatedRating / 10)}/10
+                              </span>
                             )}
                           </div>
                         )}

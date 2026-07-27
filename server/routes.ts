@@ -1922,6 +1922,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           coverUrl?: string | null;
           gameId?: string;
           summary?: string | null;
+          rating?: number | null;
+          aggregatedRating?: number | null;
+          releaseDate?: number | null;
         }> = [
           {
             category: "main",
@@ -1979,6 +1982,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               coverUrl: item.cover?.url ?? null,
               gameId: existingGame?.id,
               summary: item.summary ?? null,
+              rating: item.rating ?? null,
+              aggregatedRating: item.aggregated_rating ?? null,
+              releaseDate: item.first_release_date ?? null,
               });
             }
             if (seen.size === 0) {
