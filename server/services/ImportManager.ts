@@ -713,4 +713,29 @@ export class ImportManager {
       }
     }
   }
+
+  async manualImportFile(
+    filePath: string,
+    game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
+    category: "main" | "dlc" | "update" | "extra"
+  ): Promise<{ destDir: string; newPath: string; fileSize: number }> {
+    const config = await this.storage.getImportConfig(game.userId ?? undefined);
+    const libraryRoot = config.libraryRoot || "/data";
+    await fs.ensureDir(libraryRoot);
+
+    const stats = await fs.stat(filePath);
+    const fileName = path.basename(filePath);
+
+    const strategy = new PCImportStrategy();
+    const platformDir = this.resolvePlatformFolderName(fileName, game);
+    const plan = await strategy.planImport(filePath, game, libraryRoot, config, platformDir);
+
+    if (plan.needsReview) {
+      throw new Error(`Import requires review: ${plan.reviewReason}`);
+    }
+
+    const result = await strategy.executeImport(plan, config.transferMode);
+
+    return { destDir: path.dirname(result.destDir), newPath: result.destDir, fileSize: stats.size };
+  }
 }

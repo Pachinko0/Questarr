@@ -2090,6 +2090,82 @@ fileSize: f.fileSize,
     }
   );
 
+  // Manual import: import a file into the library using the configured transfer mode
+  app.post(
+    "/api/games/:gameId/manual-import",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const { gameId } = req.params;
+        const userId = req.user!.id;
+        const { filePath, category } = req.body;
+
+        if (!filePath || typeof filePath !== "string") {
+          return res.status(400).json({ error: "filePath is required" });
+        }
+
+        if (!["main", "dlc", "update", "extra"].includes(category)) {
+          return res.status(400).json({ error: "Invalid category" });
+        }
+
+        if (!fs.existsSync(filePath)) {
+          return res.status(400).json({ error: "File does not exist" });
+        }
+
+        const game = await resolveOwnedGame(gameId, userId, res);
+        if (!game) return;
+
+        // Try to find a matching download for this file
+        let matchedDownloadId: string | undefined;
+        try {
+          const downloads = await storage.getDownloadsByGameId(game.id);
+          const downloaders = await storage.getAllDownloaders();
+          for (const dl of downloads) {
+            if (!dl.downloaderId || !dl.downloadHash) continue;
+            const downloader = downloaders.find((d) => d.id === dl.downloaderId);
+            if (!downloader) continue;
+            try {
+              const details = await DownloaderManager.getDownloadDetails(downloader, dl.downloadHash);
+              if (details?.downloadDir && filePath.startsWith(details.downloadDir)) {
+                matchedDownloadId = dl.id;
+                break;
+              }
+            } catch {
+              // Downloader not reachable, skip
+            }
+          }
+        } catch {
+          // No download match, proceed without linking
+        }
+
+        const result = await importManager.manualImportFile(filePath, game, category);
+
+        const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
+        const storedName = originalName;
+
+        const gameFile = await storage.addGameFile({
+          gameId: game.id,
+          originalName,
+          storedName,
+          category,
+          filePath: result.newPath,
+          fileSize: result.fileSize,
+          downloadId: matchedDownloadId || null,
+        });
+
+        await storage.updateGame(game.id, { libraryPath: result.destDir });
+        if (game.status !== "owned") {
+          await storage.updateGameStatus(game.id, { status: "owned" });
+        }
+
+        res.status(201).json({ success: true, gameFile, destDir: result.destDir });
+      } catch (error) {
+        routesLogger.error({ error }, "error in manual import");
+        res.status(500).json({ error: "Failed to import file" });
+      }
+    }
+  );
+
   // Delete a game file record
   app.delete(
     "/api/game-files/:id",

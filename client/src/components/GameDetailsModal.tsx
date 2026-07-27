@@ -777,22 +777,19 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       filePath: string;
       fileSize: number | null;
     }) => {
-      const res = await apiRequest("POST", `/api/game-files`, {
-        gameId: data.gameId,
-        originalName: data.originalName,
-        storedName: data.storedName,
-        category: data.category,
+      const res = await apiRequest("POST", `/api/games/${data.gameId}/manual-import`, {
         filePath: data.filePath,
-        fileSize: data.fileSize,
+        category: data.category,
       });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/games/${game?.id}/content`] });
-      toast({ description: "File added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/games"] });
+      toast({ description: "File imported" });
     },
-    onError: () => {
-      toast({ description: "Failed to add file", variant: "destructive" });
+    onError: (error: Error) => {
+      toast({ description: error.message || "Failed to import file", variant: "destructive" });
     },
   });
 
