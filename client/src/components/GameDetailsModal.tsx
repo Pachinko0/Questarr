@@ -89,7 +89,6 @@ import { cn, safeUrl, formatBytes, isDiscoveryId } from "@/lib/utils";
 
 import { FileBrowser } from "./FileBrowser";
 const GameDownloadDialog = lazy(() => import("./GameDownloadDialog"));
-const AddGameModalLazy = lazy(() => import("./AddGameModal"));
 
 type ContentSlotFile = {
   id: string;
@@ -458,8 +457,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const isMobile = useIsMobile();
   const [selectedScreenshotIndex, setSelectedScreenshotIndex] = useState<number | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
-  const [searchGameOpen, setSearchGameOpen] = useState(false);
-  const [searchGameQuery, setSearchGameQuery] = useState("");
+  const [downloadSearchGame, setDownloadSearchGame] = useState<Game | null>(null);
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const [notesValue, setNotesValue] = useState<string>("");
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
@@ -1486,8 +1484,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                   size="sm"
                                   className="h-8 gap-1.5"
                                   onClick={() => {
-                                    setSearchGameQuery(slot.label);
-                                    setSearchGameOpen(true);
+                                    setDownloadSearchGame({ ...game, title: slot.label } as Game);
+                                    setDownloadOpen(true);
                                   }}
                                 >
                                   <Search className="h-3.5 w-3.5" />
@@ -2016,15 +2014,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
 
       {downloadOpen && (
         <Suspense fallback={null}>
-          <GameDownloadDialog game={game} open={downloadOpen} onOpenChange={setDownloadOpen} />
-        </Suspense>
-      )}
-
-      {searchGameOpen && (
-        <Suspense fallback={null}>
-          <AddGameModalLazy initialQuery={searchGameQuery} open={searchGameOpen} onOpenChange={setSearchGameOpen}>
-            <span />
-          </AddGameModalLazy>
+          <GameDownloadDialog game={downloadSearchGame ?? game} open={downloadOpen} onOpenChange={(o) => { setDownloadOpen(o); if (!o) setDownloadSearchGame(null); }} />
         </Suspense>
       )}
 
