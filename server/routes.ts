@@ -1939,6 +1939,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               fileSize: f.fileSize,
               createdAt: f.createdAt != null ? Number(f.createdAt) : null,
             })),
+            igdbId: game.igdbId ?? undefined,
+            igdbCategory: 0,
           },
         ];
 
