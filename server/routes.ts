@@ -1238,6 +1238,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Always generate new UUID - never trust client-provided IDs
+        // Set releaseStatus to "released" if the release date is in the past
+        // to avoid a spurious "Game has been released" notification on the next cron cycle
+        if (gameData.releaseDate && new Date(gameData.releaseDate) <= new Date()) {
+          gameData.releaseStatus = "released";
+        }
         const game = await storage.addGame(gameData);
         res.status(201).json(game);
       } catch (error) {
@@ -2124,7 +2129,7 @@ fileSize: f.fileSize,
         if (!file) {
           return res.status(404).json({ error: "Game file not found" });
         }
-        const updated = await storage.updateGameFile(id, { igdbContentId: null });
+        const updated = await storage.updateGameFile(id, { igdbContentId: null, category: "extra" });
         if (!updated) {
           return res.status(500).json({ error: "Failed to unlink game file" });
         }

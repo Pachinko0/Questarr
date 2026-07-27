@@ -433,17 +433,14 @@ class IGDBClient {
 
     // Try multiple search approaches to maximize results
     const searchApproaches = [
-      // Approach 1: Full text search without category filter
-      `search "${sanitizedQuery}"; fields ${IGDB_GAME_FIELDS}; limit ${limit};`,
-
-      // Approach 2: Full text search with category filter
+      // Approach 1: Full text search with category filter (main game only)
       `search "${sanitizedQuery}"; fields ${IGDB_GAME_FIELDS}; where category = 0; limit ${limit};`,
 
-      // Approach 3: Case-insensitive name matching without category
-      `fields ${IGDB_GAME_FIELDS}; where name ~= "${sanitizedQuery}"; limit ${limit};`,
+      // Approach 2: Case-insensitive name matching with category filter
+      `fields ${IGDB_GAME_FIELDS}; where category = 0 & name ~= "${sanitizedQuery}"; limit ${limit};`,
 
-      // Approach 4: Partial name matching without category
-      `fields ${IGDB_GAME_FIELDS}; where name ~ *"${sanitizedQuery}"*; sort rating desc; limit ${limit};`,
+      // Approach 3: Partial name matching with category filter
+      `fields ${IGDB_GAME_FIELDS}; where category = 0 & name ~ *"${sanitizedQuery}"*; sort rating desc; limit ${limit};`,
     ];
 
     for (let i = 0; i < searchApproaches.length && attemptCount < MAX_SEARCH_ATTEMPTS; i++) {

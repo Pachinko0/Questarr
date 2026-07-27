@@ -307,7 +307,7 @@ export interface IStorage {
   addGameFilesBatch(files: InsertGameFile[]): Promise<GameFile[]>;
   removeGameFile(id: string): Promise<boolean>;
   removeGameFilesByGameId(gameId: string): Promise<number>;
-  updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null>;
+  updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId" | "category">>): Promise<GameFile | null>;
 }
 
 export class MemStorage implements IStorage {
@@ -1362,7 +1362,7 @@ export class MemStorage implements IStorage {
     return toDelete.length;
   }
 
-  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null> {
+  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId" | "category">>): Promise<GameFile | null> {
     const existing = this.gameFiles.get(id);
     if (!existing) return null;
     const updated = { ...existing, ...data };
@@ -2492,7 +2492,7 @@ export class DatabaseStorage implements IStorage {
     return result.changes ?? 0;
   }
 
-  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null> {
+  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId" | "category">>): Promise<GameFile | null> {
     const [existing] = await db.select().from(gameFiles).where(eq(gameFiles.id, id));
     if (!existing) return null;
     const [updated] = await db
