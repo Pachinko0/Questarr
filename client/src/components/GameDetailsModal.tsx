@@ -347,7 +347,8 @@ function SourceBadge({ source }: { source: string | null | undefined }) {
     );
   }
   return (
-    <Badge variant="outline" className="gap-1.5 text-muted-foreground">
+    <Badge variant="outline" className="gap-1.5 text-muted-foreground inline-flex items-center">
+
       <UserRound className="w-3 h-3" />
       <span className="hidden sm:inline">Added Manually</span>
     </Badge>
@@ -838,7 +839,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
               >
                 {game.title}
               </DialogTitle>
-              <div className="flex gap-2 flex-shrink-0 mt-1">
+              <div className="flex gap-2 flex-shrink-0">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
