@@ -844,13 +844,13 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
+                      className="h-9 w-9 sm:h-8 sm:w-auto sm:px-2 sm:gap-1.5"
                       aria-label="Download"
                       onClick={() => setDownloadOpen(true)}
                       data-testid="button-download-game"
                     >
-                      <Download className="w-4 h-4" />
-                      <span className="hidden sm:inline">Download</span>
+                      <Download className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline text-xs">Download</span>
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent className="sm:hidden">Download</TooltipContent>
@@ -862,12 +862,12 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                       size="sm"
                       onClick={() => hiddenMutation.mutate({ gameId: game.id, hidden: !game.hidden })}
                       disabled={hiddenMutation.isPending}
-                      className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
+                      className="h-9 w-9 sm:h-8 sm:w-auto sm:px-2 sm:gap-1.5"
                       aria-label={game.hidden ? "Unhide" : "Hide"}
                       data-testid={`button-toggle-hidden-quick-${game.id}`}
                     >
-                      {game.hidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                      <span className="hidden sm:inline">
+                      {game.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      <span className="hidden sm:inline text-xs">
                         {hiddenMutation.isPending ? "Updating..." : game.hidden ? "Unhide" : "Hide"}
                       </span>
                     </Button>
@@ -881,12 +881,12 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                       size="sm"
                       onClick={() => setShowRemoveConfirm(true)}
                       disabled={removeGameMutation.isPending}
-                      className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
+                      className="h-9 w-9 sm:h-8 sm:w-auto sm:px-2 sm:gap-1.5"
                       aria-label="Remove"
                       data-testid={`button-remove-game-quick-${game.id}`}
                     >
-                      <X className="w-4 h-4" />
-                      <span className="hidden sm:inline">
+                      <X className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline text-xs">
                         {removeGameMutation.isPending ? "Removing..." : "Remove"}
                       </span>
                     </Button>
