@@ -75,6 +75,7 @@ import {
   SiPcgamingwiki,
   SiMetacritic,
   SiItchdotio,
+  SiIgdb,
 } from "react-icons/si";
 import { NexusModsIcon } from "./NexusModsIcon";
 import { getSocket } from "@/lib/socket";
@@ -260,8 +261,15 @@ function getDerivedLinks(
   pcgwUrl?: string | null
 ): Array<SiteLinkConfig & { href: string }> {
   const t = encodeURIComponent(game.title);
+  const igdbSlug = game.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
   return [
+    {
+      label: "IGDB",
+      Icon: SiIgdb as IconComponent,
+      colorClass: "text-purple-400",
+      href: `https://www.igdb.com/games/${igdbSlug}`,
+    },
     {
       label: "PCGamingWiki",
       Icon: SiPcgamingwiki as IconComponent,
