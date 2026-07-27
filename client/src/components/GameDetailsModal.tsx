@@ -130,6 +130,23 @@ const IGDB_CATEGORY_LABELS: Record<number, string> = {
   13: "Pack",
 };
 
+const IGDB_CATEGORY_COLORS: Record<number, string> = {
+  0: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  1: "bg-blue-600/30 text-blue-300 border-blue-500/40",
+  2: "bg-purple-600/30 text-purple-300 border-purple-500/40",
+  3: "bg-teal-600/30 text-teal-300 border-teal-500/40",
+  4: "bg-emerald-600/30 text-emerald-300 border-emerald-500/40",
+  5: "bg-pink-600/30 text-pink-300 border-pink-500/40",
+  6: "bg-cyan-600/30 text-cyan-300 border-cyan-500/40",
+  7: "bg-orange-600/30 text-orange-300 border-orange-500/40",
+  8: "bg-indigo-600/30 text-indigo-300 border-indigo-500/40",
+  9: "bg-violet-600/30 text-violet-300 border-violet-500/40",
+  10: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  11: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  12: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  13: "bg-amber-600/30 text-amber-300 border-amber-500/40",
+};
+
 function ContentSummary({ summary }: { summary: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -1350,7 +1367,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             )}
                             <h4 className="text-sm font-semibold truncate">{slot.label}</h4>
                             {slot.igdbCategory != null && IGDB_CATEGORY_LABELS[slot.igdbCategory] && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 text-muted-foreground">
+                              <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 shrink-0", IGDB_CATEGORY_COLORS[slot.igdbCategory])}>
                                 {IGDB_CATEGORY_LABELS[slot.igdbCategory]}
                               </Badge>
                             )}
