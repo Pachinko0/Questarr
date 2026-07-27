@@ -1949,16 +1949,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const expansions = igdbGame?.expansions ?? [];
             const dlcs = igdbGame?.dlcs ?? [];
             const standalone = igdbGame?.standalone_expansions ?? [];
+            const expandedGames = (igdbGame?.expanded_games ?? []).filter(
+              (g) => g.category !== 10 && g.category !== 11
+            );
             routesLogger.info(
-              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length, gameName: igdbGame?.name },
+              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length, expanded: expandedGames.length, gameName: igdbGame?.name },
               "IGDB content groups for game"
             );
-            const contentGroups = [...expansions, ...dlcs, ...standalone];
+            const contentGroups = [...expansions, ...dlcs, ...standalone, ...expandedGames];
             const seen = new Set<number>();
             const sourceCategory = new Map<number, number>();
             for (const item of expansions) sourceCategory.set(item.id, 2);
             for (const item of dlcs) sourceCategory.set(item.id, 1);
             for (const item of standalone) sourceCategory.set(item.id, 4);
+            for (const item of expandedGames) sourceCategory.set(item.id, 10);
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
