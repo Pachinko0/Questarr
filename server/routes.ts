@@ -1955,6 +1955,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             );
             const contentGroups = [...expansions, ...dlcs, ...standalone];
             const seen = new Set<number>();
+            const sourceCategory = new Map<number, number>();
+            for (const item of expansions) sourceCategory.set(item.id, 2);
+            for (const item of dlcs) sourceCategory.set(item.id, 1);
+            for (const item of standalone) sourceCategory.set(item.id, 4);
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
@@ -1986,7 +1990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               rating: item.rating ?? null,
               aggregatedRating: item.aggregated_rating ?? null,
               releaseDate: item.first_release_date ?? null,
-              igdbCategory: item.category ?? null,
+              igdbCategory: item.category ?? sourceCategory.get(item.id) ?? null,
               });
             }
             if (seen.size === 0) {
