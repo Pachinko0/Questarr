@@ -1932,6 +1932,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           aggregatedRating?: number | null;
           releaseDate?: number | null;
           igdbCategory?: number | null;
+          videos?: Array<{ videoId: string; name: string }>;
         }> = [
           {
             category: "main",
@@ -1952,12 +1953,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ];
 
         // Fetch IGDB expansions/DLCs/standalone expansions + reverse parent_game lookup
+        let igdbGame: Awaited<ReturnType<typeof igdbClient.getGameById>> | null = null;
         if (game.igdbId) {
           try {
-            const [igdbGame, parentGames] = await Promise.all([
+            const [fetchedGame, parentGames] = await Promise.all([
               igdbClient.getGameById(game.igdbId),
               igdbClient.getGamesByParentId(game.igdbId),
             ]);
+            igdbGame = fetchedGame;
             const expansions = igdbGame?.expansions ?? [];
             const dlcs = igdbGame?.dlcs ?? [];
             const standalone = igdbGame?.standalone_expansions ?? [];
@@ -2047,7 +2050,7 @@ fileSize: f.fileSize,
           }
         }
 
-        res.json({ slots });
+        res.json({ slots, videos: igdbGame?.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [] });
       } catch (error) {
         routesLogger.error({ error }, "error fetching game content");
         res.status(500).json({ error: "Failed to fetch game content" });

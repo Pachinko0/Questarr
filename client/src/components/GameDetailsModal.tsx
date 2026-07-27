@@ -733,6 +733,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
 
   const { data: contentData, isLoading: contentLoading, refetch: refetchContent } = useQuery<{
     slots: ContentSlot[];
+    videos?: Array<{ videoId: string; name: string }>;
   }>({
     queryKey: [`/api/games/${game?.id}/content`],
     queryFn: async () => {
@@ -1330,14 +1331,14 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
         >
           <ScrollArea className="h-full">
             <div className="pr-4 pb-2 space-y-6">
-              {game.videos && game.videos.length > 0 && (
+              {contentData?.videos && contentData.videos.length > 0 && (
                 <div>
                   <h3 className="font-semibold mb-3 flex items-center gap-2">
                     <Play className="w-4 h-4" />
                     Trailers
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {game.videos.map((video, index) => (
+                    {contentData.videos.map((video, index) => (
                       <div key={index} className="aspect-video rounded-xl overflow-hidden bg-black">
                         <iframe
                           src={`https://www.youtube.com/embed/${video.videoId}`}
