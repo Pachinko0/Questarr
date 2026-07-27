@@ -1921,6 +1921,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           igdbId?: number;
           coverUrl?: string | null;
           gameId?: string;
+          summary?: string | null;
         }> = [
           {
             category: "main",
@@ -1974,9 +1975,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   fileSize: f.fileSize,
                   createdAt: f.createdAt != null ? Number(f.createdAt) : null,
                 })),
-                igdbId: item.id,
-                coverUrl: item.cover?.url ?? null,
-                gameId: existingGame?.id,
+              igdbId: item.id,
+              coverUrl: item.cover?.url ?? null,
+              gameId: existingGame?.id,
+              summary: item.summary ?? null,
               });
             }
             if (seen.size === 0) {

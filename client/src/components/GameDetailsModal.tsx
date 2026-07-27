@@ -106,6 +106,7 @@ type ContentSlot = {
   igdbId?: number;
   coverUrl?: string | null;
   gameId?: string;
+  summary?: string | null;
 };
 
 interface GameDetailsModalProps {
@@ -639,6 +640,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
+  const [expandedContentSummaries, setExpandedContentSummaries] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
   const [deleteConfirmFileId, setDeleteConfirmFileId] = useState<string | null>(null);
 
@@ -1327,6 +1329,34 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             )}
                           </div>
                         </div>
+                        {slot.summary && (
+                          <div className="mb-2">
+                            <p
+                              className={cn(
+                                "text-xs text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere]",
+                                !expandedContentSummaries.has(slot.category) && "line-clamp-2"
+                              )}
+                            >
+                              {slot.summary}
+                            </p>
+                            {slot.summary.length > 200 && (
+                              <button
+                                className="text-xs text-blue-400 hover:text-blue-300 mt-0.5"
+                                onClick={() => {
+                                  const next = new Set(expandedContentSummaries);
+                                  if (next.has(slot.category)) {
+                                    next.delete(slot.category);
+                                  } else {
+                                    next.add(slot.category);
+                                  }
+                                  setExpandedContentSummaries(next);
+                                }}
+                              >
+                                {expandedContentSummaries.has(slot.category) ? "Show less" : "Show more"}
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {slot.present ? (
                           <div className="space-y-1.5">
                             {slot.files.map((file) => (
