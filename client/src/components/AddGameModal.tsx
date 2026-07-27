@@ -81,10 +81,14 @@ const CATEGORY_FILTER_OPTIONS = [
 interface AddGameModalProps {
   children: React.ReactNode;
   initialQuery?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export default function AddGameModal({ children, initialQuery }: AddGameModalProps) {
-  const [open, setOpen] = useState(false);
+export default function AddGameModal({ children, initialQuery, open: controlledOpen, onOpenChange: controlledOnOpenChange }: AddGameModalProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [showUndatedGames, setShowUndatedGames] = useState(false);

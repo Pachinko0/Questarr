@@ -89,6 +89,7 @@ import { cn, safeUrl, formatBytes, isDiscoveryId } from "@/lib/utils";
 
 import { FileBrowser } from "./FileBrowser";
 const GameDownloadDialog = lazy(() => import("./GameDownloadDialog"));
+const AddGameModalLazy = lazy(() => import("./AddGameModal"));
 
 type ContentSlotFile = {
   id: string;
@@ -457,6 +458,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const isMobile = useIsMobile();
   const [selectedScreenshotIndex, setSelectedScreenshotIndex] = useState<number | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [searchGameOpen, setSearchGameOpen] = useState(false);
+  const [searchGameQuery, setSearchGameQuery] = useState("");
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const [notesValue, setNotesValue] = useState<string>("");
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
@@ -1381,7 +1384,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {slot.igdbId != null && slot.gameId != null && (
+                            {slot.igdbId != null && slot.gameId != null && slot.files.length > 0 && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -1400,7 +1403,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                 <TooltipContent>Remove from collection</TooltipContent>
                               </Tooltip>
                             )}
-                            {slot.present ? (
+                            {slot.files.length > 0 ? (
                               <Badge variant="secondary" className="text-xs shrink-0">
                                 {slot.files.length} file{slot.files.length !== 1 ? "s" : ""}
                               </Badge>
@@ -1482,30 +1485,16 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                   variant="outline"
                                   size="sm"
                                   className="h-8 gap-1.5"
-                                  onClick={async () => {
-                                    if (slot.igdbId) {
-                                      try {
-                                        await apiRequest("POST", "/api/games/match-and-add", {
-                                          title: slot.label,
-                                        });
-                                        refetchContent();
-                                      } catch {
-                                        // already in collection or error
-                                      }
-                                    } else {
-                                      setDownloadOpen(true);
-                                    }
+                                  onClick={() => {
+                                    setSearchGameQuery(slot.label);
+                                    setSearchGameOpen(true);
                                   }}
                                 >
                                   <Search className="h-3.5 w-3.5" />
                                   Search
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>
-                                {slot.igdbId
-                                  ? "Add this expansion to your collection"
-                                  : "Search indexers for this game"}
-                              </TooltipContent>
+                              <TooltipContent>Search for this game to add to your collection</TooltipContent>
                             </Tooltip>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -2028,6 +2017,14 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       {downloadOpen && (
         <Suspense fallback={null}>
           <GameDownloadDialog game={game} open={downloadOpen} onOpenChange={setDownloadOpen} />
+        </Suspense>
+      )}
+
+      {searchGameOpen && (
+        <Suspense fallback={null}>
+          <AddGameModalLazy initialQuery={searchGameQuery} open={searchGameOpen} onOpenChange={setSearchGameOpen}>
+            <span />
+          </AddGameModalLazy>
         </Suspense>
       )}
 
