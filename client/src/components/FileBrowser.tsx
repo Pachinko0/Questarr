@@ -147,9 +147,7 @@ export function FileBrowser({
         {data?.items.length === 0 && (
           <div className="text-center text-sm text-muted-foreground py-4">Empty directory</div>
         )}
-        {data?.items
-          .filter((item) => !IGNORED_FILE_PATTERNS.test(item.name))
-          .map((item) =>
+        {data?.items.map((item) =>
           item.isDirectory ? (
             <button
               key={item.path}
@@ -194,8 +192,6 @@ export function FileBrowser({
       </div>
     );
   }
-
-  const IGNORED_FILE_PATTERNS = /\.parts$|\.!qB$|\.!ut$|__incomplete__|__temp__/i;
 
   // ... rest of component
 

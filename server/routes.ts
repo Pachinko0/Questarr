@@ -2103,6 +2103,7 @@ fileSize: f.fileSize,
         const userId = req.user!.id;
         const { filePath, category } = req.body;
 
+        routesLogger.debug({ filePath, category, gameId }, "Manual import request received");
         if (!filePath || typeof filePath !== "string") {
           return res.status(400).json({ error: "filePath is required" });
         }
