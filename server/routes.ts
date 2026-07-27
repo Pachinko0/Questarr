@@ -1917,6 +1917,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             downloadId: string | null;
             fileSize: number | null;
             createdAt: number | null;
+            igdbContentId?: number | null;
           }>;
           igdbId?: number;
           coverUrl?: string | null;
@@ -1938,6 +1939,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               downloadId: f.downloadId,
               fileSize: f.fileSize,
               createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+              igdbContentId: f.igdbContentId,
             })),
             igdbId: game.igdbId ?? undefined,
             igdbCategory: 0,
@@ -1989,8 +1991,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   originalName: f.originalName,
                   storedName: f.storedName,
                   downloadId: f.downloadId,
-                  fileSize: f.fileSize,
+fileSize: f.fileSize,
                   createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+                  igdbContentId: f.igdbContentId,
                 })),
               igdbId: item.id,
               coverUrl: item.cover?.url ?? null,
@@ -2033,7 +2036,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 downloadId: f.downloadId,
                 fileSize: f.fileSize,
                 createdAt: f.createdAt != null ? Number(f.createdAt) : null,
-              })),
+                  igdbContentId: f.igdbContentId,
+                })),
             });
           }
         }
@@ -2105,6 +2109,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         routesLogger.error({ error }, "error deleting game file");
         res.status(500).json({ error: "Failed to delete game file" });
+      }
+    }
+  );
+
+  // Unlink a game file from its IGDB content (clears igdbContentId without deleting the file)
+  app.patch(
+    "/api/game-files/:id/unlink",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const file = await storage.getGameFile(id);
+        if (!file) {
+          return res.status(404).json({ error: "Game file not found" });
+        }
+        const updated = await storage.updateGameFile(id, { igdbContentId: null });
+        if (!updated) {
+          return res.status(500).json({ error: "Failed to unlink game file" });
+        }
+        res.json({ success: true, file: updated });
+      } catch (error) {
+        routesLogger.error({ error }, "error unlinking game file");
+        res.status(500).json({ error: "Failed to unlink game file" });
       }
     }
   );

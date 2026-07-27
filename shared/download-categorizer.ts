@@ -24,6 +24,7 @@ const DLC_PATTERNS = [
   /\bdeluxe\b/i,
   /\bgoty\b/i, // Game of the Year editions often include DLC
   /\bcomplete\b/i,
+  /\bpack\b/i,
 ];
 
 const EXTRA_PATTERNS = [

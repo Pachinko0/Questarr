@@ -32,6 +32,8 @@ interface FileBrowserProps {
   title?: string;
   /** Override the server-side browse root (e.g. "/" to browse the full filesystem). Defaults to library root. */
   root?: string;
+  /** When "file", items can be selected individually. When "folder" (default), the folder path is used. */
+  mode?: "file" | "folder";
 }
 
 export function FileBrowser({
@@ -41,11 +43,13 @@ export function FileBrowser({
   initialPath = "/",
   title = "Select Directory",
   root,
+  mode = "folder",
 }: Readonly<FileBrowserProps>) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [data, setData] = useState<BrowseResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const loadPath = useCallback(
     async (p: string, attemptFallback: boolean = true) => {
       setLoading(true);
@@ -89,12 +93,14 @@ export function FileBrowser({
   useEffect(() => {
     if (open) {
       setCurrentPath(initialPath);
+      setSelectedFile(null);
     }
   }, [open, initialPath]);
 
   useEffect(() => {
     if (open) {
       loadPath(currentPath);
+      setSelectedFile(null);
     }
   }, [open, currentPath, loadPath]);
 
@@ -144,13 +150,27 @@ export function FileBrowser({
               <ChevronRight className="h-3 w-3 text-muted-foreground" />
             </button>
           ) : (
-            <div
+            <button
               key={item.path}
-              className="flex items-center gap-2 p-2 rounded-sm opacity-50 cursor-default"
+              type="button"
+              className={`flex items-center gap-2 p-2 rounded-sm w-full text-left ${
+                mode === "file"
+                  ? "cursor-pointer hover:bg-accent"
+                  : "opacity-50 cursor-default"
+              }`}
+              onClick={() => {
+                if (mode === "file") {
+                  setSelectedFile(item.path);
+                }
+              }}
+              disabled={mode !== "file"}
             >
               <File className="h-4 w-4 text-gray-500" />
               <span className="text-sm flex-1 truncate">{item.name}</span>
-            </div>
+              {mode === "file" && selectedFile === item.path && (
+                <span className="text-xs text-primary font-semibold mr-1">Selected</span>
+              )}
+            </button>
           )
         )}
       </div>
@@ -162,7 +182,7 @@ export function FileBrowser({
       <DialogContent className="max-w-2xl h-[500px] flex flex-col">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>Navigate and select a directory</DialogDescription>
+          <DialogDescription>{mode === "file" ? "Navigate and select a file" : "Navigate and select a directory"}</DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-2 p-2 bg-muted rounded-md mb-2">
@@ -189,11 +209,16 @@ export function FileBrowser({
           </Button>
           <Button
             onClick={() => {
-              onSelect(currentPath);
+              if (mode === "file" && selectedFile) {
+                onSelect(selectedFile);
+              } else {
+                onSelect(currentPath);
+              }
               onOpenChange(false);
             }}
+            disabled={mode === "file" && !selectedFile}
           >
-            Select Current
+            {mode === "file" ? "Select File" : "Select Current"}
           </Button>
         </div>
       </DialogContent>

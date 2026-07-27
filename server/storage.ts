@@ -307,6 +307,7 @@ export interface IStorage {
   addGameFilesBatch(files: InsertGameFile[]): Promise<GameFile[]>;
   removeGameFile(id: string): Promise<boolean>;
   removeGameFilesByGameId(gameId: string): Promise<number>;
+  updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null>;
 }
 
 export class MemStorage implements IStorage {
@@ -1359,6 +1360,14 @@ export class MemStorage implements IStorage {
       this.gameFiles.delete(f.id);
     }
     return toDelete.length;
+  }
+
+  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null> {
+    const existing = this.gameFiles.get(id);
+    if (!existing) return null;
+    const updated = { ...existing, ...data };
+    this.gameFiles.set(id, updated);
+    return updated;
   }
 
   // Import task history — not implemented in MemStorage (tests use DatabaseStorage)
@@ -2481,6 +2490,17 @@ export class DatabaseStorage implements IStorage {
   async removeGameFilesByGameId(gameId: string): Promise<number> {
     const result = await db.delete(gameFiles).where(eq(gameFiles.gameId, gameId));
     return result.changes ?? 0;
+  }
+
+  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null> {
+    const [existing] = await db.select().from(gameFiles).where(eq(gameFiles.id, id));
+    if (!existing) return null;
+    const [updated] = await db
+      .update(gameFiles)
+      .set(data)
+      .where(eq(gameFiles.id, id))
+      .returning();
+    return updated ?? null;
   }
 
   // Import task history methods

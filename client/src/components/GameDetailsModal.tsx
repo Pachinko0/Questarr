@@ -97,6 +97,7 @@ type ContentSlotFile = {
   downloadId: string | null;
   fileSize: number | null;
   createdAt: number | null;
+  igdbContentId?: number | null;
 };
 
 type ContentSlot = {
@@ -458,6 +459,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [selectedScreenshotIndex, setSelectedScreenshotIndex] = useState<number | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloadSearchGame, setDownloadSearchGame] = useState<Game | null>(null);
+  const [searchContentIgdbCategory, setSearchContentIgdbCategory] = useState<number | undefined>();
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const [notesValue, setNotesValue] = useState<string>("");
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
@@ -472,6 +474,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       setIsSummaryExpanded(false);
       setSelectedScreenshotIndex(null);
       setDownloadOpen(false);
+      setDownloadSearchGame(null);
+      setSearchContentIgdbCategory(undefined);
     }
   }, [open]);
 
@@ -749,6 +753,19 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     },
   });
 
+  const unlinkGameFileMutation = useMutation({
+    mutationFn: async (fileId: string) => {
+      await apiRequest("PATCH", `/api/game-files/${fileId}/unlink`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/games/${game?.id}/content`] });
+      toast({ description: "File unlinked from content" });
+    },
+    onError: () => {
+      toast({ description: "Failed to unlink file", variant: "destructive" });
+    },
+  });
+
   const addGameFileMutation = useMutation({
     mutationFn: async (data: {
       gameId: string;
@@ -814,12 +831,70 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       <DialogHeader className="flex-shrink-0 pb-0 pr-8 text-left">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <DialogTitle
-              className="text-2xl font-bold mb-2 leading-tight"
-              data-testid={`text-game-title-${game.id}`}
-            >
-              {game.title}
-            </DialogTitle>
+            <div className="flex items-start justify-between gap-4">
+              <DialogTitle
+                className="text-2xl font-bold mb-2 leading-tight"
+                data-testid={`text-game-title-${game.id}`}
+              >
+                {game.title}
+              </DialogTitle>
+              <div className="flex gap-2 flex-shrink-0 mt-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
+                      aria-label="Download"
+                      onClick={() => setDownloadOpen(true)}
+                      data-testid="button-download-game"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span className="hidden sm:inline">Download</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="sm:hidden">Download</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => hiddenMutation.mutate({ gameId: game.id, hidden: !game.hidden })}
+                      disabled={hiddenMutation.isPending}
+                      className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
+                      aria-label={game.hidden ? "Unhide" : "Hide"}
+                      data-testid={`button-toggle-hidden-quick-${game.id}`}
+                    >
+                      {game.hidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                      <span className="hidden sm:inline">
+                        {hiddenMutation.isPending ? "Updating..." : game.hidden ? "Unhide" : "Hide"}
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="sm:hidden">{game.hidden ? "Unhide" : "Hide"}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setShowRemoveConfirm(true)}
+                      disabled={removeGameMutation.isPending}
+                      className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
+                      aria-label="Remove"
+                      data-testid={`button-remove-game-quick-${game.id}`}
+                    >
+                      <X className="w-4 h-4" />
+                      <span className="hidden sm:inline">
+                        {removeGameMutation.isPending ? "Removing..." : "Remove"}
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="sm:hidden">Remove</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
             <DialogDescription className="sr-only">
               Detailed information about {game.title}
             </DialogDescription>
@@ -887,6 +962,28 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                 <TooltipContent className="sm:hidden">{getSourceLabel(game.source)}</TooltipContent>
               </Tooltip>
             </div>
+
+            {/* Personal notes */}
+            <div className="mt-3">
+              <Textarea
+                value={notesValue}
+                onChange={(e) => setNotesValue(e.target.value)}
+                onBlur={() => {
+                  const trimmed = notesValue.trim() || null;
+                  if (trimmed !== (game.notes ?? null)) {
+                    notesMutation.mutate(trimmed);
+                  }
+                }}
+                placeholder="Personal notes..."
+                className="resize-none min-h-[56px] sm:min-h-[72px] text-sm"
+                maxLength={10000}
+                aria-label="Personal notes for this game"
+                disabled={notesMutation.isPending}
+              />
+              {notesMutation.isPending && (
+                <p className="text-xs text-muted-foreground mt-1">Saving...</p>
+              )}
+            </div>
           </div>
           {game.coverUrl && (
             <div className="flex-shrink-0">
@@ -899,86 +996,6 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
               />
             </div>
           )}
-        </div>
-
-        {/* Personal notes */}
-        <div className="mt-3">
-          <Textarea
-            value={notesValue}
-            onChange={(e) => setNotesValue(e.target.value)}
-            onBlur={() => {
-              const trimmed = notesValue.trim() || null;
-              if (trimmed !== (game.notes ?? null)) {
-                notesMutation.mutate(trimmed);
-              }
-            }}
-            placeholder="Personal notes..."
-            className="resize-none min-h-[56px] sm:min-h-[72px] text-sm"
-            maxLength={10000}
-            aria-label="Personal notes for this game"
-            disabled={notesMutation.isPending}
-          />
-          {notesMutation.isPending && (
-            <p className="text-xs text-muted-foreground mt-1">Saving...</p>
-          )}
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex gap-2 mt-3">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
-                aria-label="Download"
-                onClick={() => setDownloadOpen(true)}
-                data-testid="button-download-game"
-              >
-                <Download className="w-4 h-4" />
-                <span className="hidden sm:inline">Download</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Download</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => hiddenMutation.mutate({ gameId: game.id, hidden: !game.hidden })}
-                disabled={hiddenMutation.isPending}
-                className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
-                aria-label={game.hidden ? "Unhide" : "Hide"}
-                data-testid={`button-toggle-hidden-quick-${game.id}`}
-              >
-                {game.hidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                <span className="hidden sm:inline">
-                  {hiddenMutation.isPending ? "Updating..." : game.hidden ? "Unhide" : "Hide"}
-                </span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">{game.hidden ? "Unhide" : "Hide"}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowRemoveConfirm(true)}
-                disabled={removeGameMutation.isPending}
-                className="h-10 w-10 sm:h-9 sm:w-auto sm:px-3 sm:gap-2"
-                aria-label="Remove"
-                data-testid={`button-remove-game-quick-${game.id}`}
-              >
-                <X className="w-4 h-4" />
-                <span className="hidden sm:inline">
-                  {removeGameMutation.isPending ? "Removing..." : "Remove"}
-                </span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Remove</TooltipContent>
-          </Tooltip>
         </div>
       </DialogHeader>
 
@@ -1458,20 +1475,36 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     )}
                                   </div>
                                 </div>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
-                                      disabled={deleteGameFileMutation.isPending}
-                                      onClick={() => setDeleteConfirmFileId(file.id)}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Delete file</TooltipContent>
-                                </Tooltip>
+                                {file.igdbContentId != null && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-7 w-7 text-muted-foreground hover:text-amber-500 shrink-0"
+                                          disabled={unlinkGameFileMutation.isPending}
+                                          onClick={() => unlinkGameFileMutation.mutate(file.id)}
+                                        >
+                                          <Link className="h-3.5 w-3.5" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>Unlink from content</TooltipContent>
+                                    </Tooltip>
+                                  )}
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                                        disabled={deleteGameFileMutation.isPending}
+                                        onClick={() => setDeleteConfirmFileId(file.id)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Delete file</TooltipContent>
+                                  </Tooltip>
                               </div>
                             ))}
                           </div>
@@ -1485,6 +1518,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                   className="h-8 gap-1.5"
                                   onClick={() => {
                                     setDownloadSearchGame({ ...game, title: slot.label } as Game);
+                                    setSearchContentIgdbCategory(slot.igdbCategory ?? undefined);
                                     setDownloadOpen(true);
                                   }}
                                 >
@@ -2014,7 +2048,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
 
       {downloadOpen && (
         <Suspense fallback={null}>
-          <GameDownloadDialog game={downloadSearchGame ?? game} open={downloadOpen} onOpenChange={(o) => { setDownloadOpen(o); if (!o) setDownloadSearchGame(null); }} />
+          <GameDownloadDialog game={downloadSearchGame ?? game} open={downloadOpen} onOpenChange={(o) => { setDownloadOpen(o); if (!o) { setDownloadSearchGame(null); setSearchContentIgdbCategory(undefined); } }} contentIgdbCategory={searchContentIgdbCategory} />
         </Suspense>
       )}
 
@@ -2037,6 +2071,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
             root="/"
             title="Select File to Import"
             initialPath="/"
+            mode="file"
           />
         </Suspense>
       )}

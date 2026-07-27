@@ -120,6 +120,7 @@ interface GameDownloadDialogProps {
   game: Game | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contentIgdbCategory?: number;
 }
 
 type ReleaseMetadata = ReturnType<typeof parseReleaseMetadata>;
@@ -217,7 +218,7 @@ function ReleaseMetadataBadges({
   );
 }
 
-export default function GameDownloadDialog({ game, open, onOpenChange }: GameDownloadDialogProps) {
+export default function GameDownloadDialog({ game, open, onOpenChange, contentIgdbCategory }: GameDownloadDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
@@ -605,6 +606,11 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
   });
 
   const handleDownload = (download: DownloadItem) => {
+    if (contentIgdbCategory !== undefined && contentIgdbCategory !== 0) {
+      setDownloadingGuid(download.guid || download.link);
+      downloadMutation.mutate([download]);
+      return;
+    }
     if (categorizedDownloads.update.length > 0) {
       const downloadCategory = groupDownloadsByCategory([download]);
       if (downloadCategory.main.length > 0) {
