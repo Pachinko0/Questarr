@@ -1843,12 +1843,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (game.igdbId) {
           try {
             const igdbGame = await igdbClient.getGameById(game.igdbId);
-            const contentGroups = [
-              ...(igdbGame?.expansions ?? []),
-              ...(igdbGame?.dlcs ?? []),
-              ...(igdbGame?.standalone_expansions ?? []),
-              ...(igdbGame?.expanded_games ?? []),
-            ];
+            const expansions = igdbGame?.expansions ?? [];
+            const dlcs = igdbGame?.dlcs ?? [];
+            const standalone = igdbGame?.standalone_expansions ?? [];
+            routesLogger.debug(
+              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length },
+              "IGDB content groups for game"
+            );
+            const contentGroups = [...expansions, ...dlcs, ...standalone];
             const seen = new Set<number>();
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
