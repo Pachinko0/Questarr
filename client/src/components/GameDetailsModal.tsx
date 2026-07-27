@@ -1475,36 +1475,34 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     )}
                                   </div>
                                 </div>
-                                {file.igdbContentId != null && (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-7 w-7 text-muted-foreground hover:text-amber-500 shrink-0"
-                                          disabled={unlinkGameFileMutation.isPending}
-                                          onClick={() => unlinkGameFileMutation.mutate(file.id)}
-                                        >
-                                          <Link className="h-3.5 w-3.5" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>Unlink from content</TooltipContent>
-                                    </Tooltip>
-                                  )}
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
-                                        disabled={deleteGameFileMutation.isPending}
-                                        onClick={() => setDeleteConfirmFileId(file.id)}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Delete file</TooltipContent>
-                                  </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-amber-500 shrink-0"
+                                      disabled={unlinkGameFileMutation.isPending}
+                                      onClick={() => unlinkGameFileMutation.mutate(file.id)}
+                                    >
+                                      <Link className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Unlink from content</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                                      disabled={deleteGameFileMutation.isPending}
+                                      onClick={() => setDeleteConfirmFileId(file.id)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Delete file</TooltipContent>
+                                </Tooltip>
                               </div>
                             ))}
                           </div>
