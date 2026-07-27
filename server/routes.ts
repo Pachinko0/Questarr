@@ -1949,8 +1949,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const expansions = igdbGame?.expansions ?? [];
             const dlcs = igdbGame?.dlcs ?? [];
             const standalone = igdbGame?.standalone_expansions ?? [];
-            routesLogger.debug(
-              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length },
+            routesLogger.info(
+              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length, gameName: igdbGame?.name },
               "IGDB content groups for game"
             );
             const contentGroups = [...expansions, ...dlcs, ...standalone];
@@ -1994,7 +1994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               });
             }
             if (seen.size === 0) {
-              routesLogger.debug({ igdbId: game.igdbId }, "No expansions/DLCs returned from IGDB");
+              routesLogger.info({ igdbId: game.igdbId }, "No expansions/DLCs returned from IGDB");
             }
           } catch (err) {
             routesLogger.warn({ error: err, igdbId: game.igdbId }, "Failed to fetch IGDB expansions");
