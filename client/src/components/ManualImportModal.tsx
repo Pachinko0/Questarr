@@ -64,11 +64,12 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!fileBrowserOpen && open && step === "scan" && scannedFiles.length === 0) {
+  const handleFileBrowserChange = (open: boolean) => {
+    setFileBrowserOpen(open);
+    if (!open && step === "scan" && scannedFiles.length === 0) {
       onOpenChange(false);
     }
-  }, [fileBrowserOpen, open, step, scannedFiles.length, onOpenChange]);
+  };
 
   const { data: userGames = [] } = useQuery<Game[]>({
     queryKey: ["/api/games"],
@@ -367,7 +368,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
 
         <FileBrowser
           open={fileBrowserOpen}
-          onOpenChange={setFileBrowserOpen}
+          onOpenChange={handleFileBrowserChange}
           onSelect={handleFolderSelect}
           onMultiSelect={handleMultiFileSelect}
           root="/"
