@@ -724,17 +724,10 @@ export class ImportManager {
     await fs.ensureDir(libraryRoot);
 
     const stats = await fs.stat(filePath);
+    const fileName = path.basename(filePath);
 
     const strategy = new PCImportStrategy();
-    // For manual imports, use the game's IGDB platform directly to avoid filename parsing issues
-    const igdbId = this.getPrimaryPlatformId(game);
-    let platformDir = "PC";
-    if (igdbId !== undefined) {
-      const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
-      if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) {
-        platformDir = PLATFORM_FOLDER_NAMES[igdbKey];
-      }
-    }
+    const platformDir = this.resolvePlatformFolderName(fileName, game);
     const plan = await strategy.planImport(filePath, game, libraryRoot, config, platformDir);
 
     if (plan.needsReview) {
