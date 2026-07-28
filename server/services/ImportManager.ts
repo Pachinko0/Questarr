@@ -774,7 +774,7 @@ export class ImportManager {
 
     const strategy = new PCImportStrategy();
     const platformDir = this.resolvePlatformFolderName(fileName, game);
-    const plan = await strategy.planImport(filePath, game, libraryRoot, config, platformDir);
+    const plan = await strategy.planImport(filePath, game, libraryRoot, { ...config, overwriteExisting: true }, platformDir);
 
     if (plan.needsReview) {
       throw new Error(`Import requires review: ${plan.reviewReason}`);
