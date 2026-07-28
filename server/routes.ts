@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage.js";
 import { igdbClient } from "./igdb.js";
 import type { IGDBGame } from "./igdb.js";
-import { db } from "./db.js";
+import { db, pool } from "./db.js";
 import { sql } from "drizzle-orm";
 import {
   insertGameSchema,
@@ -2105,6 +2105,24 @@ fileSize: f.fileSize,
     }
   );
 
+  // Database maintenance endpoints
+  app.post(
+    "/api/library/backup",
+    authenticateToken,
+    async (_req: Request, res: Response) => {
+      try {
+        const dbDir = path.dirname(pool.name);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const backupPath = path.join(dbDir, `sqlite-backup-${timestamp}.db`);
+        pool.backup(backupPath);
+        res.json({ backupPath });
+      } catch (error) {
+        routesLogger.error({ error }, "Failed to backup database");
+        res.status(500).json({ error: "Failed to backup database" });
+      }
+    }
+  );
+
   // Scan library for old-style platform folders and propose renames to RomM standard
   app.get(
     "/api/library/migration/scan",
@@ -2132,9 +2150,10 @@ fileSize: f.fileSize,
           const newName = PLATFORM_FOLDER_NAMES[key];
           if (!newName || oldName === newName) continue;
           const oldExists = dirLookup.has(oldName.toLowerCase());
-          const newExists = dirLookup.has(newName.toLowerCase());
           if (oldExists) {
             const actualOldName = dirs.find((d) => d.toLowerCase() === oldName.toLowerCase())!;
+            if (actualOldName === newName) continue; // already named correctly
+            const newExists = dirs.some((d) => d !== actualOldName && d.toLowerCase() === newName.toLowerCase());
             renames.push({ oldName: actualOldName, newName, merge: newExists });
           }
         }
@@ -2161,6 +2180,13 @@ fileSize: f.fileSize,
         if (!renames || !Array.isArray(renames)) {
           return res.status(400).json({ error: "renames array is required" });
         }
+
+        // Auto-backup database before applying destructive changes
+        const dbDir = path.dirname(pool.name);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const backupPath = path.join(dbDir, `sqlite-pre-migration-${timestamp}.db`);
+        pool.backup(backupPath);
+        routesLogger.info({ backupPath }, "Database backed up before migration");
 
         const results: Array<{
           oldName: string;

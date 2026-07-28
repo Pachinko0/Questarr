@@ -2032,6 +2032,41 @@ export default function SettingsPage() {
                 <div className="flex flex-col space-y-2">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
+                      <p className="text-sm font-medium">Backup Database</p>
+                      <p className="text-xs text-muted-foreground">
+                        Create a timestamped backup of the SQLite database before making destructive
+                        changes like folder migration.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const res = await apiRequest("POST", "/api/library/backup");
+                          const data = await res.json();
+                          toast({
+                            title: "Database Backed Up",
+                            description: `Saved to ${data.backupPath}`,
+                          });
+                        } catch (err) {
+                          toast({
+                            title: "Backup Failed",
+                            description: err instanceof Error ? err.message : "Unknown error",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                      className="gap-2 w-full sm:w-auto shrink-0"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      Backup DB
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
                       <p className="text-sm font-medium">Refresh IGDB Data</p>
                       <p className="text-xs text-muted-foreground">
                         Clear the in-memory IGDB cache so the next lookup fetches fresh data
