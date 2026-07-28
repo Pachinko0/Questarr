@@ -79,7 +79,42 @@ const IGDB_PLATFORM_NAME_TO_KEY: Record<string, string> = {
   "psp": "psp",
 };
 
-const PLATFORM_FOLDER_NAMES: Record<string, string> = {
+export const PLATFORM_FOLDER_NAMES: Record<string, string> = {
+  nes: "nes",
+  snes: "snes",
+  n64: "n64",
+  gamecube: "ngc",
+  wii: "wii",
+  "wii u": "wiiu",
+  wiiu: "wiiu",
+  gb: "gb",
+  gbc: "gbc",
+  gba: "gba",
+  nds: "nds",
+  "3ds": "3ds",
+  switch: "switch",
+  ps1: "psx",
+  ps2: "ps2",
+  ps3: "ps3",
+  ps4: "ps4",
+  ps5: "ps5",
+  psp: "psp",
+  psvita: "psvita",
+  xbox: "xbox",
+  xbox360: "xbox360",
+  "xbox series": "series-x-s",
+  "game gear": "gamegear",
+  "master system": "sms",
+  "mega drive": "genesis",
+  dreamcast: "dc",
+  "atari 2600": "atari2600",
+  "neo geo": "neogeoaes",
+  pc: "win",
+  linux: "linux",
+  mac: "mac",
+};
+
+export const OLD_PLATFORM_FOLDER_NAMES: Record<string, string> = {
   nes: "NES",
   snes: "SNES",
   n64: "N64",
@@ -179,6 +214,28 @@ export class ImportManager {
     }
 
     return "PC";
+  }
+
+  private async resolvePlatformDirWithFallback(
+    title: string,
+    game: { platforms?: unknown },
+    libraryRoot: string
+  ): Promise<string> {
+    const newName = this.resolvePlatformFolderName(title, game);
+    const entry = Object.entries(PLATFORM_FOLDER_NAMES).find(([, v]) => v === newName);
+    if (entry) {
+      const oldName = OLD_PLATFORM_FOLDER_NAMES[entry[0]];
+      if (oldName && oldName !== newName) {
+        try {
+          if (await fs.pathExists(path.join(libraryRoot, oldName))) {
+            return oldName;
+          }
+        } catch {
+          // ignore fs errors, fall through to newName
+        }
+      }
+    }
+    return newName;
   }
 
   private async extractIfArchive(sourcePath: string): Promise<string> {
@@ -429,7 +486,7 @@ export class ImportManager {
 
       await fs.ensureDir(libraryRoot);
 
-      const platformDir = this.resolvePlatformFolderName(download.downloadTitle || "", game);
+      const platformDir = await this.resolvePlatformDirWithFallback(download.downloadTitle || "", game, libraryRoot);
       const plan = await strategy.planImport(
         processingPath,
         game,
@@ -573,7 +630,7 @@ export class ImportManager {
       // Source resolution failed — still return a proposed path based on game title
     }
 
-    const platformDir = this.resolvePlatformFolderName(download.downloadTitle || "", game);
+    const platformDir = await this.resolvePlatformDirWithFallback(download.downloadTitle || "", game, libraryRoot);
     const fallbackProposedPath = path.join(libraryRoot, platformDir, sanitizeFsName(game.title));
 
     if (resolvedOriginalPath) {
@@ -763,7 +820,8 @@ export class ImportManager {
   async manualImportFile(
     filePath: string,
     game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
-    category: "main" | "dlc" | "update" | "extra"
+    category: "main" | "dlc" | "update" | "extra",
+    platformDir?: string
   ): Promise<{ destDir: string; newPath: string; fileSize: number }> {
     const config = await this.storage.getImportConfig(game.userId ?? undefined);
     const libraryRoot = config.libraryRoot || "/data";
@@ -773,8 +831,8 @@ export class ImportManager {
     const fileName = path.basename(filePath);
 
     const strategy = new PCImportStrategy();
-    const platformDir = this.resolvePlatformFolderName(fileName, game);
-    const plan = await strategy.planImport(filePath, game, libraryRoot, { ...config, overwriteExisting: true }, platformDir);
+    const resolvedPlatform = platformDir || await this.resolvePlatformDirWithFallback(fileName, game, libraryRoot);
+    const plan = await strategy.planImport(filePath, game, libraryRoot, { ...config, overwriteExisting: true }, resolvedPlatform);
 
     if (plan.needsReview) {
       throw new Error(`Import requires review: ${plan.reviewReason}`);

@@ -206,8 +206,7 @@ export function parseReleaseMetadata(releaseName: string): ReleaseMetadata {
   if (/\bjapanese\b/i.test(cleaned)) languages.push("Japanese");
   if (/\benglish\b/i.test(cleaned)) languages.push("English");
 
-// 4. Extract Platform — strip size indicators first to avoid false matches
-  const platformCleaned = cleaned.replace(/\(\d+[.\s]?\d*\s*(gb|mb|kb|tb|gib|mib)\s*\)/gi, "");
+// 4. Extract Platform
   const PLATFORM_PATTERNS: [RegExp, string][] = [
     [/\b(ps5|playstation\s*5)\b/i, "PS5"],
     [/\b(ps4|playstation\s*4)\b/i, "PS4"],
@@ -239,7 +238,7 @@ export function parseReleaseMetadata(releaseName: string): ReleaseMetadata {
     [/\b(linux)\b/i, "Linux"],
     [/\b(mac|macos|osx)\b/i, "Mac"],
   ];
-  const platform = PLATFORM_PATTERNS.find(([regex]) => regex.test(platformCleaned))?.[1];
+  const platform = PLATFORM_PATTERNS.find(([regex]) => regex.test(cleaned))?.[1];
 
   // 5. DRM / Source
   let drm: string | undefined;

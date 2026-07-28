@@ -693,6 +693,56 @@ export default function SettingsPage() {
     },
   });
 
+  interface MigrationRename {
+    oldName: string;
+    newName: string;
+  }
+  interface MigrationResult extends MigrationRename {
+    success: boolean;
+    error?: string;
+  }
+  const [migrationRenames, setMigrationRenames] = useState<MigrationRename[] | null>(null);
+  const [migrationResults, setMigrationResults] = useState<MigrationResult[] | null>(null);
+
+  const migrateScanMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("GET", "/api/library/migration/scan");
+      return res.json() as Promise<{ renames: MigrationRename[] }>;
+    },
+    onSuccess: (data) => {
+      setMigrationRenames(data.renames);
+      setMigrationResults(null);
+      if (data.renames.length === 0) {
+        toast({ description: "No old-style platform folders found." });
+      }
+    },
+    onError: (error: Error) => {
+      toast({ title: "Scan Failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const migrateApplyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/library/migration/apply", {
+        renames: migrationRenames,
+      });
+      return res.json() as Promise<{ results: MigrationResult[] }>;
+    },
+    onSuccess: (data) => {
+      setMigrationResults(data.results);
+      const succeeded = data.results.filter((r) => r.success).length;
+      const failed = data.results.filter((r) => !r.success).length;
+      toast({
+        description: `Renamed ${succeeded} folder${succeeded !== 1 ? "s" : ""}${
+          failed > 0 ? `, ${failed} failed` : ""
+        }.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Migration Failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const isLoading = configLoading || settingsLoading;
   const error = configError;
 
@@ -2091,6 +2141,82 @@ export default function SettingsPage() {
                         )}
                       </div>
                     )}
+                </div>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Normalize Library</p>
+                      <p className="text-xs text-muted-foreground">
+                        Scan for old-style platform folder names and rename them to RomM-compatible
+                        names so the library works with Questarr's folder naming.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        migrationRenames
+                          ? migrateApplyMutation.mutate()
+                          : migrateScanMutation.mutate()
+                      }
+                      disabled={migrateScanMutation.isPending || migrateApplyMutation.isPending}
+                      className="gap-2 w-full sm:w-auto shrink-0"
+                    >
+                      <RefreshCw
+                        className={`h-4 w-4 ${
+                          migrateScanMutation.isPending || migrateApplyMutation.isPending
+                            ? "animate-spin"
+                            : ""
+                        }`}
+                      />
+                      {migrationRenames
+                        ? "Apply Renames"
+                        : migrateScanMutation.isPending
+                          ? "Scanning..."
+                          : "Scan Library"}
+                    </Button>
+                  </div>
+                  {migrationRenames && migrationRenames.length > 0 && (
+                    <div className="mt-2 space-y-2 rounded-md border border-border p-3 text-xs">
+                      <p className="font-medium text-amber-500">
+                        {migrationRenames.length} folder{migrationRenames.length !== 1 ? "s" : ""} to rename
+                      </p>
+                      <ul className="mt-1 space-y-1 text-muted-foreground">
+                        {migrationRenames.map((r) => (
+                          <li key={r.oldName}>
+                            <code className="rounded bg-muted px-1">{r.oldName}</code> →{" "}
+                            <code className="rounded bg-muted px-1">{r.newName}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {migrationResults && migrationResults.length > 0 && (
+                    <div className="mt-2 space-y-2 rounded-md border border-border p-3 text-xs">
+                      {migrationResults.map((r) => (
+                        <p
+                          key={r.oldName}
+                          className={r.success ? "text-green-500" : "text-red-500"}
+                        >
+                          {r.success ? "✓" : "✗"} <code className="rounded bg-muted px-1">{r.oldName}</code>
+                          {" → "}
+                          <code className="rounded bg-muted px-1">{r.newName}</code>
+                          {!r.success && <> — {r.error}</>}
+                        </p>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 text-xs"
+                        onClick={() => {
+                          setMigrationRenames(null);
+                          setMigrationResults(null);
+                        }}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

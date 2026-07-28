@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { Loader2, FolderOpen, Upload, Search, Check, X, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -27,6 +28,8 @@ interface ScannedFile {
 interface ManualImportModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  game?: Game;
+  defaultCategory?: string;
 }
 
 interface ImportAssignment {
@@ -34,6 +37,7 @@ interface ImportAssignment {
   gameId: string;
   gameTitle: string;
   category: string;
+  platformDir: string;
 }
 
 interface ImportResult {
@@ -42,18 +46,26 @@ interface ImportResult {
   error?: string;
 }
 
-export default function ManualImportModal({ open, onOpenChange }: ManualImportModalProps) {
+export default function ManualImportModal({ open, onOpenChange, game, defaultCategory }: ManualImportModalProps) {
   const { toast } = useToast();
   const [step, setStep] = useState<"browse" | "scan" | "assign" | "importing" | "done">("browse");
   const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [scanPath, setScanPath] = useState("");
   const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
   const [assignments, setAssignments] = useState<ImportAssignment[]>([]);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
 
+  const isSingleFile = !!game;
+
   const { data: userGames = [] } = useQuery<Game[]>({
     queryKey: ["/api/games"],
+    enabled: open && !isSingleFile,
+  });
+
+  const { data: platformFolders = [] } = useQuery<string[]>({
+    queryKey: ["/api/platform-folders"],
     enabled: open,
   });
 
@@ -61,6 +73,21 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
     setScanPath(path);
     setFolderBrowserOpen(false);
     setStep("scan");
+  };
+
+  const handleFileSelect = (path: string) => {
+    setFileBrowserOpen(false);
+    const name = path.split("/").pop() || path.split("\\").pop() || path;
+    const file: ScannedFile = { name, path, size: 0, isDirectory: false };
+    setScannedFiles([file]);
+    setAssignments([{
+      file,
+      gameId: game!.id,
+      gameTitle: game!.title,
+      category: defaultCategory || "main",
+      platformDir: "",
+    }]);
+    setStep("assign");
   };
 
   const scanMutation = useMutation({
@@ -77,6 +104,7 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
           gameId: "",
           gameTitle: "",
           category: "main",
+          platformDir: "",
         }))
       );
       setStep(files.length > 0 ? "assign" : "done");
@@ -99,10 +127,12 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
         setImportProgress({ current: i + 1, total: validAssignments.length });
         const a = validAssignments[i];
         try {
-          const res = await apiRequest("POST", `/api/games/${a.gameId}/manual-import`, {
+          const body: Record<string, string> = {
             filePath: a.file.path,
             category: a.category,
-          });
+          };
+          if (a.platformDir) body.platformDir = a.platformDir;
+          const res = await apiRequest("POST", `/api/games/${a.gameId}/manual-import`, body);
           const data = await res.json();
           if (data.success) {
             results.push({ filePath: a.file.path, success: true });
@@ -121,6 +151,10 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
       queryClient.invalidateQueries({ queryKey: ["/api/games"] });
       const successCount = results.filter((r) => r.success).length;
       toast({ description: `Imported ${successCount} of ${results.length} files` });
+    },
+    onMutate: () => {
+      const count = assignments.filter((a) => a.gameId).length;
+      toast({ description: `Importing ${count} file${count !== 1 ? "s" : ""}...` });
     },
     onError: (err: Error) => {
       toast({ description: err.message, variant: "destructive" });
@@ -159,9 +193,9 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
         <DialogHeader>
           <DialogTitle>Manual Import</DialogTitle>
           <DialogDescription>
-            {step === "browse" && "Select a folder containing game files to import"}
+            {step === "browse" && (isSingleFile ? "Select a file to import" : "Select a folder containing game files to import")}
             {step === "scan" && "Scanning folder..."}
-            {step === "assign" && `Assign ${scannedFiles.length} file(s) to games`}
+            {step === "assign" && (isSingleFile ? "Confirm import details" : `Assign ${scannedFiles.length} file(s) to games`)}
             {step === "importing" && `Importing ${importProgress.current} of ${importProgress.total}...`}
             {step === "done" && "Import complete"}
           </DialogDescription>
@@ -170,17 +204,27 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
         {step === "browse" && (
           <div className="flex flex-col items-center justify-center py-12 gap-4">
             <FolderOpen className="w-12 h-12 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Choose a folder to scan for game files</p>
-            <Button onClick={() => setFolderBrowserOpen(true)} className="gap-2">
-              <FolderOpen className="w-4 h-4" />
-              Select Folder
-            </Button>
+            <p className="text-sm text-muted-foreground">
+              {isSingleFile ? "Choose a file to import" : "Choose a folder to scan for game files"}
+            </p>
+            {isSingleFile ? (
+              <Button onClick={() => setFileBrowserOpen(true)} className="gap-2">
+                <Upload className="w-4 h-4" />
+                Select File
+              </Button>
+            ) : (
+              <Button onClick={() => setFolderBrowserOpen(true)} className="gap-2">
+                <FolderOpen className="w-4 h-4" />
+                Select Folder
+              </Button>
+            )}
             <FileBrowser
-              open={folderBrowserOpen}
-              onOpenChange={setFolderBrowserOpen}
-              onSelect={handleFolderSelect}
+              open={isSingleFile ? fileBrowserOpen : folderBrowserOpen}
+              onOpenChange={isSingleFile ? setFileBrowserOpen : setFolderBrowserOpen}
+              onSelect={isSingleFile ? handleFileSelect : handleFolderSelect}
               root="/"
-              title="Select Folder to Scan"
+              title={isSingleFile ? "Select File to Import" : "Select Folder to Scan"}
+              mode={isSingleFile ? "file" : undefined}
             />
           </div>
         )}
@@ -196,7 +240,7 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
             <ScrollArea className="flex-1 border rounded-md">
               <div className="divide-y">
                 {assignments.map((a, i) => (
-                  <div key={i} className="p-4 space-y-2">
+                  <div key={i} className="p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{a.file.name}</p>
@@ -213,26 +257,61 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
                         <option value="extra">Extra</option>
                       </select>
                     </div>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                        <Input
-                          placeholder="Search game..."
-                          value={a.gameTitle}
-                          onChange={(e) => {
-                            updateAssignment(i, { gameTitle: e.target.value, gameId: "" });
-                            handleGameSearch(e.target.value, i);
-                          }}
-                          className="pl-8 h-8 text-sm"
-                        />
+
+                    {isSingleFile ? (
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <Label className="text-xs text-muted-foreground">Game</Label>
+                          <p className="text-sm font-medium">{game!.title}</p>
+                        </div>
+                        <div className="w-48">
+                          <Label className="text-xs text-muted-foreground">Platform</Label>
+                          <select
+                            value={a.platformDir}
+                            onChange={(e) => updateAssignment(i, { platformDir: e.target.value })}
+                            className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+                          >
+                            <option value="">Auto-detect</option>
+                            {platformFolders.map((pf) => (
+                              <option key={pf} value={pf}>{pf}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      {a.gameId && (
-                        <Badge variant="secondary" className="h-8">
-                          <Check className="w-3 h-3 mr-1" />
-                          Matched
-                        </Badge>
-                      )}
-                    </div>
+                    ) : (
+                      <>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                            <Input
+                              placeholder="Search game..."
+                              value={a.gameTitle}
+                              onChange={(e) => {
+                                updateAssignment(i, { gameTitle: e.target.value, gameId: "" });
+                                handleGameSearch(e.target.value, i);
+                              }}
+                              className="pl-8 h-8 text-sm"
+                            />
+                          </div>
+                          {a.gameId && (
+                            <Badge variant="secondary" className="h-8">
+                              <Check className="w-3 h-3 mr-1" />
+                              Matched
+                            </Badge>
+                          )}
+                        </div>
+                        <select
+                          value={a.platformDir}
+                          onChange={(e) => updateAssignment(i, { platformDir: e.target.value })}
+                          className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+                        >
+                          <option value="">Auto-detect</option>
+                          {platformFolders.map((pf) => (
+                            <option key={pf} value={pf}>{pf}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -248,7 +327,7 @@ export default function ManualImportModal({ open, onOpenChange }: ManualImportMo
                 className="gap-2"
               >
                 <Upload className="w-4 h-4" />
-                Import {assignments.filter((a) => a.gameId).length} file(s)
+                {isSingleFile ? "Import" : `Import ${assignments.filter((a) => a.gameId).length} file(s)`}
               </Button>
             </div>
           </>

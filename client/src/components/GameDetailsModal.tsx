@@ -88,8 +88,8 @@ import StatusBadge, { getStatusLabel } from "./StatusBadge";
 import { apiRequest } from "@/lib/queryClient";
 import { cn, safeUrl, formatBytes, isDiscoveryId } from "@/lib/utils";
 
-import { FileBrowser } from "./FileBrowser";
 const GameDownloadDialog = lazy(() => import("./GameDownloadDialog"));
+const ManualImportModal = lazy(() => import("./ManualImportModal"));
 
 type ContentSlotFile = {
   id: string;
@@ -725,7 +725,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     Array<{ name: string; path: string; category: string; isDirectory: boolean }>
   >([]);
   const [scanningDisk, setScanningDisk] = useState(false);
-  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [manualImportOpen, setManualImportOpen] = useState(false);
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
@@ -775,33 +775,6 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     },
     onError: () => {
       toast({ description: "Failed to unlink file", variant: "destructive" });
-    },
-  });
-
-  const addGameFileMutation = useMutation({
-    mutationFn: async (data: {
-      gameId: string;
-      originalName: string;
-      storedName: string;
-      category: string;
-      filePath: string;
-      fileSize: number | null;
-    }) => {
-      const res = await apiRequest("POST", `/api/games/${data.gameId}/manual-import`, {
-        filePath: data.filePath,
-        category: data.category,
-      });
-      return res.json();
-    },
-    onMutate: () => {
-      toast({ description: "Importing..." });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/games/${game?.id}/content`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/games"] });
-    },
-    onError: (error: Error) => {
-      toast({ description: error.message || "Failed to import file", variant: "destructive" });
     },
   });
 
@@ -1570,7 +1543,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                   className="h-8 gap-1.5"
                                   onClick={() => {
                                     setImportTargetCategory(slot.category);
-                                    setFileBrowserOpen(true);
+                                    setManualImportOpen(true);
                                   }}
                                 >
                                   <Upload className="h-3.5 w-3.5" />
@@ -1687,26 +1660,14 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
-                                    disabled={addGameFileMutation.isPending}
                                     onClick={() => {
-                                      addGameFileMutation.mutate({
-                                        gameId: game!.id,
-                                        originalName: file.name,
-                                        storedName: file.name,
-                                        category: file.category,
-                                        filePath: file.path,
-                                        fileSize: null,
-                                      });
+                                      setImportTargetCategory(file.category);
                                       setScanResults((prev) =>
                                         prev.filter((f) => f.path !== file.path)
                                       );
                                     }}
                                   >
-                                    {addGameFileMutation.isPending ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <Upload className="h-3.5 w-3.5" />
-                                    )}
+                                    <Upload className="h-3.5 w-3.5" />
                                   </Button>
                                 </div>
                               </div>
@@ -2090,26 +2051,13 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
         </Suspense>
       )}
 
-      {fileBrowserOpen && (
+      {manualImportOpen && (
         <Suspense fallback={null}>
-          <FileBrowser
-            open={fileBrowserOpen}
-            onOpenChange={setFileBrowserOpen}
-            onSelect={(path) => {
-              addGameFileMutation.mutate({
-                gameId: game.id,
-                originalName: path.split("/").pop() || path.split("\\").pop() || path,
-                storedName: path.split("/").pop() || path.split("\\").pop() || path,
-                category: importTargetCategory,
-                filePath: path,
-                fileSize: null,
-              });
-              setFileBrowserOpen(false);
-            }}
-            root="/"
-            title="Select File to Import"
-            initialPath="/"
-            mode="file"
+          <ManualImportModal
+            open={manualImportOpen}
+            onOpenChange={setManualImportOpen}
+            game={game}
+            defaultCategory={importTargetCategory}
           />
         </Suspense>
       )}

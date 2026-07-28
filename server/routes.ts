@@ -105,7 +105,7 @@ import { importRouter } from "./routes/import.js";
 import { importTasksRouter } from "./routes/import-tasks.js";
 import { systemRouter } from "./routes/system.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
-import { importManager } from "./services/index.js";
+import { importManager, PLATFORM_FOLDER_NAMES, OLD_PLATFORM_FOLDER_NAMES } from "./services/index.js";
 
 // Cache-Control header values for IGDB discovery endpoints
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
@@ -2095,6 +2095,100 @@ fileSize: f.fileSize,
     }
   );
 
+  // Return available platform folder names for manual import
+  app.get(
+    "/api/platform-folders",
+    authenticateToken,
+    async (_req: Request, res: Response) => {
+      const folders = Object.values(PLATFORM_FOLDER_NAMES);
+      res.json(folders);
+    }
+  );
+
+  // Scan library for old-style platform folders and propose renames to RomM standard
+  app.get(
+    "/api/library/migration/scan",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = req.user!.id;
+        const config = await storage.getImportConfig(userId);
+        const resolvedRoot = path.resolve(config.libraryRoot);
+
+        if (!(await fsExtra.pathExists(resolvedRoot))) {
+          return res.json({ renames: [] });
+        }
+
+        const dirs = new Set(
+          (await fsExtra.readdir(resolvedRoot, { withFileTypes: true }))
+            .filter((e) => e.isDirectory())
+            .map((e) => e.name)
+        );
+
+        const renames: Array<{ oldName: string; newName: string }> = [];
+        for (const [key, oldName] of Object.entries(OLD_PLATFORM_FOLDER_NAMES)) {
+          const newName = PLATFORM_FOLDER_NAMES[key];
+          if (!newName || oldName === newName) continue;
+          if (dirs.has(oldName) && !dirs.has(newName)) {
+            renames.push({ oldName, newName });
+          }
+        }
+
+        res.json({ renames });
+      } catch (error) {
+        routesLogger.error({ error }, "Failed to scan for migration");
+        res.status(500).json({ error: "Failed to scan library" });
+      }
+    }
+  );
+
+  // Apply folder renames from old naming to RomM standard
+  app.post(
+    "/api/library/migration/apply",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = req.user!.id;
+        const config = await storage.getImportConfig(userId);
+        const resolvedRoot = path.resolve(config.libraryRoot);
+
+        const { renames } = req.body as { renames: Array<{ oldName: string; newName: string }> };
+        if (!renames || !Array.isArray(renames)) {
+          return res.status(400).json({ error: "renames array is required" });
+        }
+
+        const results: Array<{ oldName: string; newName: string; success: boolean; error?: string }> = [];
+
+        for (const { oldName, newName } of renames) {
+          try {
+            const oldPath = path.join(resolvedRoot, oldName);
+            const newPath = path.join(resolvedRoot, newName);
+
+            if (!(await fsExtra.pathExists(oldPath))) {
+              results.push({ oldName, newName, success: false, error: "Source folder does not exist" });
+              continue;
+            }
+
+            if (await fsExtra.pathExists(newPath)) {
+              results.push({ oldName, newName, success: false, error: "Target folder already exists" });
+              continue;
+            }
+
+            await fsExtra.rename(oldPath, newPath);
+            results.push({ oldName, newName, success: true });
+          } catch (err) {
+            results.push({ oldName, newName, success: false, error: (err as Error).message });
+          }
+        }
+
+        res.json({ results });
+      } catch (error) {
+        routesLogger.error({ error }, "Failed to apply migration");
+        res.status(500).json({ error: "Failed to apply migration" });
+      }
+    }
+  );
+
   // Manual import: import a file into the library using the configured transfer mode
   app.post(
     "/api/games/:gameId/manual-import",
@@ -2103,7 +2197,7 @@ fileSize: f.fileSize,
       try {
         const { gameId } = req.params;
         const userId = req.user!.id;
-        const { filePath, category } = req.body;
+        const { filePath, category, platformDir } = req.body;
 
         routesLogger.debug({ filePath, category, gameId }, "Manual import request received");
         if (!filePath || typeof filePath !== "string") {
@@ -2144,7 +2238,7 @@ fileSize: f.fileSize,
           // No download match, proceed without linking
         }
 
-        const result = await importManager.manualImportFile(filePath, game, category);
+        const result = await importManager.manualImportFile(filePath, game, category, platformDir);
 
         const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
         const storedName = originalName;
@@ -2231,7 +2325,7 @@ fileSize: f.fileSize,
         const results: Array<{ filePath: string; success: boolean; error?: string }> = [];
 
         for (const item of imports) {
-          const { filePath, gameId, category } = item;
+          const { filePath, gameId, category, platformDir } = item;
 
           if (!filePath || !gameId || !category) {
             results.push({ filePath, success: false, error: "Missing required fields (filePath, gameId, category)" });
@@ -2255,7 +2349,7 @@ fileSize: f.fileSize,
               continue;
             }
 
-            const result = await importManager.manualImportFile(filePath, game, category);
+            const result = await importManager.manualImportFile(filePath, game, category, platformDir);
 
             const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
             await storage.addGameFile({
