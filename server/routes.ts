@@ -2127,13 +2127,15 @@ fileSize: f.fileSize,
 
         const dirLookup = new Set(dirs.map((d) => d.toLowerCase()));
 
-        const renames: Array<{ oldName: string; newName: string }> = [];
+        const renames: Array<{ oldName: string; newName: string; merge: boolean }> = [];
         for (const [key, oldName] of Object.entries(OLD_PLATFORM_FOLDER_NAMES)) {
           const newName = PLATFORM_FOLDER_NAMES[key];
           if (!newName || oldName === newName) continue;
-          if (dirLookup.has(oldName.toLowerCase()) && !dirLookup.has(newName.toLowerCase())) {
+          const oldExists = dirLookup.has(oldName.toLowerCase());
+          const newExists = dirLookup.has(newName.toLowerCase());
+          if (oldExists) {
             const actualOldName = dirs.find((d) => d.toLowerCase() === oldName.toLowerCase())!;
-            renames.push({ oldName: actualOldName, newName });
+            renames.push({ oldName: actualOldName, newName, merge: newExists });
           }
         }
 
@@ -2155,32 +2157,60 @@ fileSize: f.fileSize,
         const config = await storage.getImportConfig(userId);
         const resolvedRoot = path.resolve(config.libraryRoot);
 
-        const { renames } = req.body as { renames: Array<{ oldName: string; newName: string }> };
+        const { renames } = req.body as { renames: Array<{ oldName: string; newName: string; merge?: boolean }> };
         if (!renames || !Array.isArray(renames)) {
           return res.status(400).json({ error: "renames array is required" });
         }
 
-        const results: Array<{ oldName: string; newName: string; success: boolean; error?: string }> = [];
+        const results: Array<{
+          oldName: string;
+          newName: string;
+          action: string;
+          success: boolean;
+          error?: string;
+          gamesUpdated?: number;
+          filesUpdated?: number;
+        }> = [];
 
-        for (const { oldName, newName } of renames) {
+        for (const { oldName, newName, merge } of renames) {
           try {
             const oldPath = path.join(resolvedRoot, oldName);
             const newPath = path.join(resolvedRoot, newName);
 
             if (!(await fsExtra.pathExists(oldPath))) {
-              results.push({ oldName, newName, success: false, error: "Source folder does not exist" });
+              results.push({ oldName, newName, action: "", success: false, error: "Source folder does not exist" });
               continue;
             }
 
-            if (await fsExtra.pathExists(newPath)) {
-              results.push({ oldName, newName, success: false, error: "Target folder already exists" });
-              continue;
+            if (merge) {
+              if (!(await fsExtra.pathExists(newPath))) {
+                results.push({ oldName, newName, action: "merge", success: false, error: "Target folder does not exist for merge" });
+                continue;
+              }
+              await fsExtra.copy(oldPath, newPath, { overwrite: true });
+              await fsExtra.remove(oldPath);
+            } else {
+              if (await fsExtra.pathExists(newPath)) {
+                results.push({ oldName, newName, action: "rename", success: false, error: "Target folder already exists" });
+                continue;
+              }
+              await fsExtra.rename(oldPath, newPath);
             }
 
-            await fsExtra.rename(oldPath, newPath);
-            results.push({ oldName, newName, success: true });
+            // Update database paths prefix
+            const oldPrefix = path.resolve(oldPath) + path.sep;
+            const newPrefix = path.resolve(newPath) + path.sep;
+            const pattern = oldPrefix + "%";
+            const gamesResult = db.run(sql`UPDATE games SET library_path = REPLACE(library_path, ${oldPrefix}, ${newPrefix}) WHERE library_path LIKE ${pattern}`);
+            const filesResult = db.run(sql`UPDATE game_files SET file_path = REPLACE(file_path, ${oldPrefix}, ${newPrefix}) WHERE file_path LIKE ${pattern}`);
+
+            results.push({
+              oldName, newName, action: merge ? "merge" : "rename", success: true,
+              gamesUpdated: Number(gamesResult.changes ?? 0),
+              filesUpdated: Number(filesResult.changes ?? 0),
+            });
           } catch (err) {
-            results.push({ oldName, newName, success: false, error: (err as Error).message });
+            results.push({ oldName, newName, action: merge ? "merge" : "rename", success: false, error: (err as Error).message });
           }
         }
 
