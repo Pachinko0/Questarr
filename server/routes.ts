@@ -2123,6 +2123,8 @@ fileSize: f.fileSize,
           .filter((e) => e.isDirectory())
           .map((e) => e.name);
 
+        routesLogger.debug({ resolvedRoot, dirs }, "Migration scan directories");
+
         const dirLookup = new Set(dirs.map((d) => d.toLowerCase()));
 
         const renames: Array<{ oldName: string; newName: string }> = [];
