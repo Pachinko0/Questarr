@@ -793,10 +793,12 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       });
       return res.json();
     },
+    onMutate: () => {
+      toast({ description: "Importing..." });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/games/${game?.id}/content`] });
       queryClient.invalidateQueries({ queryKey: ["/api/games"] });
-      toast({ description: "File imported" });
     },
     onError: (error: Error) => {
       toast({ description: error.message || "Failed to import file", variant: "destructive" });
@@ -1700,7 +1702,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                       );
                                     }}
                                   >
-                                    <Upload className="h-3.5 w-3.5" />
+                                    {addGameFileMutation.isPending ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Upload className="h-3.5 w-3.5" />
+                                    )}
                                   </Button>
                                 </div>
                               </div>

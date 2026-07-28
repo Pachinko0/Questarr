@@ -207,7 +207,7 @@ export function parseReleaseMetadata(releaseName: string): ReleaseMetadata {
   if (/\benglish\b/i.test(cleaned)) languages.push("English");
 
 // 4. Extract Platform — strip size indicators first to avoid false matches
-  const platformCleaned = cleaned.replace(/\(\d+\.?\d*\s*(gb|mb|kb|tb|gib|mib)\s*\)/gi, "");
+  const platformCleaned = cleaned.replace(/\(\d+[.\s]?\d*\s*(gb|mb|kb|tb|gib|mib)\s*\)/gi, "");
   const PLATFORM_PATTERNS: [RegExp, string][] = [
     [/\b(ps5|playstation\s*5)\b/i, "PS5"],
     [/\b(ps4|playstation\s*4)\b/i, "PS4"],
