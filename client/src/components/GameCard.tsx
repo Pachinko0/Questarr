@@ -164,13 +164,12 @@ const GameCard = ({
           )}
         </div>
         {!isDiscovery && !isMobile && (
-          <div className="absolute top-2 left-2">
+          <div className="absolute top-2 left-2 z-10">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   size="icon"
                   variant="secondary"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-background/80 hover:bg-background"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleToggleHidden();
@@ -178,7 +177,7 @@ const GameCard = ({
                   aria-label={game.hidden ? `Unhide ${game.title}` : `Hide ${game.title}`}
                   data-testid={`button-toggle-hidden-${game.id}`}
                 >
-                  {game.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  {game.hidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
