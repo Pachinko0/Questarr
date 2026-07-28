@@ -238,27 +238,6 @@ export function FileBrowser({
           <Button
             variant="ghost"
             size="sm"
-            aria-label="Home"
-            disabled={currentPath === "/"}
-            onClick={() => handleNavigate("/")}
-          >
-            <Home className="h-4 w-4" />
-          </Button>
-          {shortcuts?.map((s) => (
-            <Button
-              key={s.path}
-              variant="ghost"
-              size="sm"
-              disabled={currentPath === s.path}
-              onClick={() => handleNavigate(s.path)}
-              title={s.path}
-            >
-              {s.label}
-            </Button>
-          ))}
-          <Button
-            variant="ghost"
-            size="sm"
             aria-label="Navigate up"
             disabled={!data?.parent || currentPath === "/"}
             onClick={handleUp}
@@ -266,6 +245,35 @@ export function FileBrowser({
             <CornerLeftUp className="h-4 w-4" />
           </Button>
         </div>
+
+        {(shortcuts || currentPath !== "/") && (
+          <div className="flex items-center gap-1.5 mb-2 justify-end">
+            {shortcuts?.map((s) => (
+              <Button
+                key={s.path}
+                variant="outline"
+                size="sm"
+                disabled={currentPath === s.path}
+                onClick={() => handleNavigate(s.path)}
+                title={s.path}
+                className="h-7 text-xs"
+              >
+                {s.label}
+              </Button>
+            ))}
+            {currentPath !== "/" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleNavigate("/")}
+                className="h-7 text-xs gap-1"
+              >
+                <Home className="h-3 w-3" />
+                Root
+              </Button>
+            )}
+          </div>
+        )}
 
         {recentPaths.length > 0 && (
           <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
