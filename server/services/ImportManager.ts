@@ -123,15 +123,14 @@ export class ImportManager {
   }
 
   private resolvePlatformFolderName(downloadTitle: string, game: { platforms?: unknown }): string {
-    // Prefer the game's IGDB platform over filename parsing
+    const key = this.getReleasePlatformKey(downloadTitle);
+    if (key && PLATFORM_FOLDER_NAMES[key]) return PLATFORM_FOLDER_NAMES[key];
+
     const igdbId = this.getPrimaryPlatformId(game);
     if (igdbId !== undefined) {
       const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
       if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) return PLATFORM_FOLDER_NAMES[igdbKey];
     }
-
-    const key = this.getReleasePlatformKey(downloadTitle);
-    if (key && PLATFORM_FOLDER_NAMES[key]) return PLATFORM_FOLDER_NAMES[key];
 
     return "PC";
   }
@@ -725,10 +724,17 @@ export class ImportManager {
     await fs.ensureDir(libraryRoot);
 
     const stats = await fs.stat(filePath);
-    const fileName = path.basename(filePath);
 
     const strategy = new PCImportStrategy();
-    const platformDir = this.resolvePlatformFolderName(fileName, game);
+    // For manual imports, use the game's IGDB platform directly to avoid filename parsing issues
+    const igdbId = this.getPrimaryPlatformId(game);
+    let platformDir = "PC";
+    if (igdbId !== undefined) {
+      const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
+      if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) {
+        platformDir = PLATFORM_FOLDER_NAMES[igdbKey];
+      }
+    }
     const plan = await strategy.planImport(filePath, game, libraryRoot, config, platformDir);
 
     if (plan.needsReview) {
