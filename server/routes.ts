@@ -472,6 +472,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             "data:",
             "https://images.igdb.com",
             "https://staticdelivery.nexusmods.com",
+            "https://i.ytimg.com",
           ],
           "connect-src": connectSrc,
           // Narrower than helmet's defaults (which allow any "https:" origin): fonts and
@@ -479,6 +480,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // third-party font/style CDN to allow for.
           "font-src": ["'self'", "data:"],
           "style-src": ["'self'", "'unsafe-inline'"],
+          "frame-src": ["https://www.youtube.com"],
           "upgrade-insecure-requests": isSslEnabled ? [] : null,
         },
       },
