@@ -2119,18 +2119,19 @@ fileSize: f.fileSize,
           return res.json({ renames: [] });
         }
 
-        const dirs = new Set(
-          (await fsExtra.readdir(resolvedRoot, { withFileTypes: true }))
-            .filter((e) => e.isDirectory())
-            .map((e) => e.name)
-        );
+        const dirs = (await fsExtra.readdir(resolvedRoot, { withFileTypes: true }))
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name);
+
+        const dirLookup = new Set(dirs.map((d) => d.toLowerCase()));
 
         const renames: Array<{ oldName: string; newName: string }> = [];
         for (const [key, oldName] of Object.entries(OLD_PLATFORM_FOLDER_NAMES)) {
           const newName = PLATFORM_FOLDER_NAMES[key];
           if (!newName || oldName === newName) continue;
-          if (dirs.has(oldName) && !dirs.has(newName)) {
-            renames.push({ oldName, newName });
+          if (dirLookup.has(oldName.toLowerCase()) && !dirLookup.has(newName.toLowerCase())) {
+            const actualOldName = dirs.find((d) => d.toLowerCase() === oldName.toLowerCase())!;
+            renames.push({ oldName: actualOldName, newName });
           }
         }
 
