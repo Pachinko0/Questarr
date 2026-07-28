@@ -26,6 +26,14 @@ import {
 } from "lucide-react";
 import { NexusModsIcon } from "@/components/NexusModsIcon";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -703,6 +711,7 @@ export default function SettingsPage() {
   }
   const [migrationRenames, setMigrationRenames] = useState<MigrationRename[] | null>(null);
   const [migrationResults, setMigrationResults] = useState<MigrationResult[] | null>(null);
+  const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
 
   const migrateScanMutation = useMutation({
     mutationFn: async () => {
@@ -714,6 +723,8 @@ export default function SettingsPage() {
       setMigrationResults(null);
       if (data.renames.length === 0) {
         toast({ description: "No old-style platform folders found." });
+      } else {
+        setMigrationDialogOpen(true);
       }
     },
     onError: (error: Error) => {
@@ -730,6 +741,8 @@ export default function SettingsPage() {
     },
     onSuccess: (data) => {
       setMigrationResults(data.results);
+      setMigrationRenames(null);
+      setMigrationDialogOpen(false);
       const succeeded = data.results.filter((r) => r.success).length;
       const failed = data.results.filter((r) => !r.success).length;
       toast({
@@ -737,6 +750,7 @@ export default function SettingsPage() {
           failed > 0 ? `, ${failed} failed` : ""
         }.`,
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/games"] });
     },
     onError: (error: Error) => {
       toast({ title: "Migration Failed", description: error.message, variant: "destructive" });
@@ -2154,70 +2168,56 @@ export default function SettingsPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() =>
-                        migrationRenames
-                          ? migrateApplyMutation.mutate()
-                          : migrateScanMutation.mutate()
-                      }
+                      onClick={() => migrateScanMutation.mutate()}
                       disabled={migrateScanMutation.isPending || migrateApplyMutation.isPending}
                       className="gap-2 w-full sm:w-auto shrink-0"
                     >
                       <RefreshCw
                         className={`h-4 w-4 ${
-                          migrateScanMutation.isPending || migrateApplyMutation.isPending
-                            ? "animate-spin"
-                            : ""
+                          migrateScanMutation.isPending ? "animate-spin" : ""
                         }`}
                       />
-                      {migrationRenames
-                        ? "Apply Renames"
-                        : migrateScanMutation.isPending
-                          ? "Scanning..."
-                          : "Scan Library"}
+                      {migrateScanMutation.isPending ? "Scanning..." : "Scan Library"}
                     </Button>
                   </div>
-                  {migrationRenames && migrationRenames.length > 0 && (
-                    <div className="mt-2 space-y-2 rounded-md border border-border p-3 text-xs">
-                      <p className="font-medium text-amber-500">
-                        {migrationRenames.length} folder{migrationRenames.length !== 1 ? "s" : ""} to rename
-                      </p>
-                      <ul className="mt-1 space-y-1 text-muted-foreground">
-                        {migrationRenames.map((r) => (
-                          <li key={r.oldName}>
-                            <code className="rounded bg-muted px-1">{r.oldName}</code> →{" "}
-                            <code className="rounded bg-muted px-1">{r.newName}</code>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {migrationResults && migrationResults.length > 0 && (
-                    <div className="mt-2 space-y-2 rounded-md border border-border p-3 text-xs">
-                      {migrationResults.map((r) => (
-                        <p
-                          key={r.oldName}
-                          className={r.success ? "text-green-500" : "text-red-500"}
-                        >
-                          {r.success ? "✓" : "✗"} <code className="rounded bg-muted px-1">{r.oldName}</code>
-                          {" → "}
+                </div>
+
+                <Dialog open={migrationDialogOpen} onOpenChange={setMigrationDialogOpen}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Normalize Library</DialogTitle>
+                      <DialogDescription>
+                        The following old-style folders will be renamed to RomM-compatible names.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2 py-2">
+                      {migrationRenames?.map((r) => (
+                        <div key={r.oldName} className="flex items-center gap-2 text-sm">
+                          <code className="rounded bg-muted px-1">{r.oldName}</code>
+                          <span className="text-muted-foreground">→</span>
                           <code className="rounded bg-muted px-1">{r.newName}</code>
-                          {!r.success && <> — {r.error}</>}
-                        </p>
+                        </div>
                       ))}
+                    </div>
+                    <DialogFooter>
                       <Button
-                        variant="ghost"
-                        size="sm"
-                        className="mt-1 text-xs"
+                        variant="outline"
                         onClick={() => {
+                          setMigrationDialogOpen(false);
                           setMigrationRenames(null);
-                          setMigrationResults(null);
                         }}
                       >
-                        Dismiss
+                        Cancel
                       </Button>
-                    </div>
-                  )}
-                </div>
+                      <Button
+                        onClick={() => migrateApplyMutation.mutate()}
+                        disabled={migrateApplyMutation.isPending}
+                      >
+                        {migrateApplyMutation.isPending ? "Renaming..." : "Apply"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
           </TabsContent>
