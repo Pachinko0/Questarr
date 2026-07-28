@@ -44,6 +44,41 @@ const RELEASE_PLATFORM_TO_IGDB_ID: Record<string, number> = {
   pc: 6,
 };
 
+// Maps IGDB platform names (as stored in game.platforms) to folder keys used in PLATFORM_FOLDER_NAMES
+const IGDB_PLATFORM_NAME_TO_KEY: Record<string, string> = {
+  "nintendo switch": "switch",
+  "pc (microsoft windows)": "pc",
+  "playstation 5": "ps5",
+  "playstation 4": "ps4",
+  "playstation 3": "ps3",
+  "playstation 2": "ps2",
+  "playstation": "ps1",
+  "xbox series x|s": "xbox series",
+  "xbox one": "xbox",
+  "xbox 360": "xbox360",
+  "wii u": "wiiu",
+  "wii": "wii",
+  "nintendo 64": "n64",
+  "super nintendo entertainment system": "snes",
+  "nintendo entertainment system": "nes",
+  "nintendo ds": "nds",
+  "nintendo 3ds": "3ds",
+  "game boy advance": "gba",
+  "game boy color": "gbc",
+  "game boy": "gb",
+  "gamecube": "gamecube",
+  "sega mega drive/genesis": "mega drive",
+  "master system": "master system",
+  "dreamcast": "dreamcast",
+  "game gear": "game gear",
+  "atari 2600": "atari 2600",
+  "neo geo": "neo geo",
+  "linux": "linux",
+  "mac": "mac",
+  "ps vita": "psvita",
+  "psp": "psp",
+};
+
 const PLATFORM_FOLDER_NAMES: Record<string, string> = {
   nes: "NES",
   snes: "SNES",
@@ -130,6 +165,17 @@ export class ImportManager {
     if (igdbId !== undefined) {
       const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
       if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) return PLATFORM_FOLDER_NAMES[igdbKey];
+    }
+
+    // Match IGDB platform name strings (e.g. "Nintendo Switch") to folder keys
+    if (Array.isArray(game.platforms)) {
+      for (const p of game.platforms) {
+        const name = typeof p === "string" ? p.toLowerCase().trim() : "";
+        const folderKey = IGDB_PLATFORM_NAME_TO_KEY[name];
+        if (folderKey && PLATFORM_FOLDER_NAMES[folderKey]) {
+          return PLATFORM_FOLDER_NAMES[folderKey];
+        }
+      }
     }
 
     return "PC";
