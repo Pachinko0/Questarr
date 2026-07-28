@@ -2164,8 +2164,9 @@ fileSize: f.fileSize,
 
         res.status(201).json({ success: true, gameFile, destDir: result.destDir });
       } catch (error) {
-        routesLogger.error({ error }, "error in manual import");
-        res.status(500).json({ error: "Failed to import file" });
+        routesLogger.error({ err: error }, "error in manual import");
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ error: "Failed to import file", details: message });
       }
     }
   );
