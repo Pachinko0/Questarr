@@ -833,7 +833,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-4">
               <DialogTitle
-                className="text-2xl font-bold mb-2 leading-tight"
+                className="text-2xl font-bold mb-2 leading-tight min-h-[2lh]"
                 data-testid={`text-game-title-${game.id}`}
               >
                 {game.title}
