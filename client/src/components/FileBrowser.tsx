@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Folder, File, ChevronRight, CornerLeftUp, Loader2, HardDrive, Clock } from "lucide-react";
+import { Folder, File, ChevronRight, CornerLeftUp, Loader2, HardDrive, Clock, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -37,6 +37,8 @@ interface FileBrowserProps {
   mode?: "file" | "folder";
   /** When true, files show checkboxes for multi-selection and a "Select N Files" button appears alongside "Select Current". Calls onMultiSelect for files, onSelect for current directory. */
   multiple?: boolean;
+  /** Quick-navigate shortcuts shown in the path bar */
+  shortcuts?: Array<{ label: string; path: string }>;
 }
 
 export function FileBrowser({
@@ -49,6 +51,7 @@ export function FileBrowser({
   root,
   mode = "folder",
   multiple = false,
+  shortcuts,
 }: Readonly<FileBrowserProps>) {
   const [currentPath, setCurrentPath] = useState(() => {
     if (open) {
@@ -232,6 +235,27 @@ export function FileBrowser({
           <div className="text-sm font-mono truncate flex-1" title={currentPath}>
             {currentPath}
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Home"
+            disabled={currentPath === "/"}
+            onClick={() => handleNavigate("/")}
+          >
+            <Home className="h-4 w-4" />
+          </Button>
+          {shortcuts?.map((s) => (
+            <Button
+              key={s.path}
+              variant="ghost"
+              size="sm"
+              disabled={currentPath === s.path}
+              onClick={() => handleNavigate(s.path)}
+              title={s.path}
+            >
+              {s.label}
+            </Button>
+          ))}
           <Button
             variant="ghost"
             size="sm"

@@ -16,7 +16,7 @@ import { Loader2, Upload, Search, Check, X, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { FileBrowser } from "./FileBrowser";
-import type { Game } from "@shared/schema";
+import type { Game, ImportConfig } from "@shared/schema";
 
 interface ScannedFile {
   name: string;
@@ -80,6 +80,16 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
     queryKey: ["/api/platform-folders"],
     enabled: open,
   });
+
+  const { data: importConfig } = useQuery<ImportConfig>({
+    queryKey: ["/api/imports/config"],
+    enabled: open,
+  });
+
+  const libraryShortcuts = useMemo(() => {
+    if (!importConfig?.libraryRoot) return undefined;
+    return [{ label: "Library", path: importConfig.libraryRoot }];
+  }, [importConfig]);
 
   const handleFolderSelect = (path: string) => {
     setScanPath(path);
@@ -373,6 +383,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
           onMultiSelect={handleMultiFileSelect}
           root="/"
           title="Select Files or Folder"
+          shortcuts={libraryShortcuts}
           multiple
         />
       </DialogContent>
