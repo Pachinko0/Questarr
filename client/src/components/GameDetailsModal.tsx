@@ -730,6 +730,15 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
   const [deleteConfirmFileId, setDeleteConfirmFileId] = useState<string | null>(null);
+  const [titleSingleLine, setTitleSingleLine] = useState(true);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (!game) return;
+    if (titleRef.current) {
+      setTitleSingleLine(titleRef.current.scrollHeight <= titleRef.current.clientHeight);
+    }
+  }, [game?.title]);
 
   const { data: contentData, isLoading: contentLoading, refetch: refetchContent } = useQuery<{
     slots: ContentSlot[];
@@ -833,7 +842,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-4">
               <DialogTitle
-                className="text-2xl font-bold mb-2 leading-tight min-h-[2lh]"
+                ref={titleRef}
+                className="text-2xl font-bold mb-2 leading-tight"
                 data-testid={`text-game-title-${game.id}`}
               >
                 {game.title}
@@ -939,19 +949,22 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                 </div>
               )}
               {game.searchResultsAvailable && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Badge
-                      variant="outline"
-                      className="gap-1 border-violet-500 text-violet-400 cursor-default"
-                      data-testid={`badge-search-results-${game.id}`}
-                    >
-                      <Search className="w-3 h-3" />
-                      <span className="hidden sm:inline">Results available</span>
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent className="sm:hidden">Downloads found on indexers</TooltipContent>
-                </Tooltip>
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="outline"
+                        className="gap-1 border-violet-500 text-violet-400 cursor-default"
+                        data-testid={`badge-search-results-${game.id}`}
+                      >
+                        <Search className="w-3 h-3" />
+                        <span className="hidden sm:inline">Results available</span>
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent className="sm:hidden">Downloads found on indexers</TooltipContent>
+                  </Tooltip>
+                  {titleSingleLine && <div className="w-full" />}
+                </>
               )}
               <Tooltip>
                 <TooltipTrigger asChild>
