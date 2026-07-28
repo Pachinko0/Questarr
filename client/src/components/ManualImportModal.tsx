@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Dialog,
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Loader2, FolderOpen, Upload, Search, Check, X, AlertCircle } from "lucide-react";
+import { Loader2, Upload, Search, Check, X, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { FileBrowser } from "./FileBrowser";
@@ -48,8 +48,7 @@ interface ImportResult {
 
 export default function ManualImportModal({ open, onOpenChange, game, defaultCategory }: ManualImportModalProps) {
   const { toast } = useToast();
-  const [step, setStep] = useState<"browse" | "scan" | "assign" | "importing" | "done">("browse");
-  const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
+  const [step, setStep] = useState<"scan" | "assign" | "importing" | "done">("scan");
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [scanPath, setScanPath] = useState("");
   const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
@@ -58,6 +57,18 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
 
   const isSingleFile = !!game;
+
+  useEffect(() => {
+    if (open) {
+      setFileBrowserOpen(true);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!fileBrowserOpen && open && step === "scan" && scannedFiles.length === 0) {
+      onOpenChange(false);
+    }
+  }, [fileBrowserOpen, open, step, scannedFiles.length, onOpenChange]);
 
   const { data: userGames = [] } = useQuery<Game[]>({
     queryKey: ["/api/games"],
@@ -71,22 +82,28 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
 
   const handleFolderSelect = (path: string) => {
     setScanPath(path);
-    setFolderBrowserOpen(false);
+    setFileBrowserOpen(false);
     setStep("scan");
   };
 
-  const handleFileSelect = (path: string) => {
+  const handleMultiFileSelect = (paths: string[]) => {
     setFileBrowserOpen(false);
-    const name = path.split("/").pop() || path.split("\\").pop() || path;
-    const file: ScannedFile = { name, path, size: 0, isDirectory: false };
-    setScannedFiles([file]);
-    setAssignments([{
-      file,
-      gameId: game!.id,
-      gameTitle: game!.title,
-      category: defaultCategory || "main",
-      platformDir: "",
-    }]);
+    const files: ScannedFile[] = paths.map((p) => ({
+      name: p.split("/").pop() || p.split("\\").pop() || p,
+      path: p,
+      size: 0,
+      isDirectory: false,
+    }));
+    setScannedFiles(files);
+    setAssignments(
+      files.map((f) => ({
+        file: f,
+        gameId: game?.id ?? "",
+        gameTitle: game?.title ?? "",
+        category: defaultCategory || "main",
+        platformDir: "",
+      }))
+    );
     setStep("assign");
   };
 
@@ -179,7 +196,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
   };
 
   const reset = () => {
-    setStep("browse");
+    setStep("scan");
     setScanPath("");
     setScannedFiles([]);
     setAssignments([]);
@@ -193,7 +210,6 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
         <DialogHeader>
           <DialogTitle>Manual Import</DialogTitle>
           <DialogDescription>
-            {step === "browse" && (isSingleFile ? "Select a file to import" : "Select a folder containing game files to import")}
             {step === "scan" && "Scanning folder..."}
             {step === "assign" && (isSingleFile ? "Confirm import details" : `Assign ${scannedFiles.length} file(s) to games`)}
             {step === "importing" && `Importing ${importProgress.current} of ${importProgress.total}...`}
@@ -201,35 +217,13 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
           </DialogDescription>
         </DialogHeader>
 
-        {step === "browse" && (
-          <div className="flex flex-col items-center justify-center py-12 gap-4">
-            <FolderOpen className="w-12 h-12 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              {isSingleFile ? "Choose a file to import" : "Choose a folder to scan for game files"}
-            </p>
-            {isSingleFile ? (
-              <Button onClick={() => setFileBrowserOpen(true)} className="gap-2">
-                <Upload className="w-4 h-4" />
-                Select File
-              </Button>
-            ) : (
-              <Button onClick={() => setFolderBrowserOpen(true)} className="gap-2">
-                <FolderOpen className="w-4 h-4" />
-                Select Folder
-              </Button>
-            )}
-            <FileBrowser
-              open={isSingleFile ? fileBrowserOpen : folderBrowserOpen}
-              onOpenChange={isSingleFile ? setFileBrowserOpen : setFolderBrowserOpen}
-              onSelect={isSingleFile ? handleFileSelect : handleFolderSelect}
-              root="/"
-              title={isSingleFile ? "Select File to Import" : "Select Folder to Scan"}
-              mode={isSingleFile ? "file" : undefined}
-            />
+        {step === "scan" && scannedFiles.length === 0 && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           </div>
         )}
 
-        {step === "scan" && (
+        {step === "scan" && scannedFiles.length > 0 && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           </div>
@@ -370,6 +364,16 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
             </div>
           </div>
         )}
+
+        <FileBrowser
+          open={fileBrowserOpen}
+          onOpenChange={setFileBrowserOpen}
+          onSelect={handleFolderSelect}
+          onMultiSelect={handleMultiFileSelect}
+          root="/"
+          title="Select Files or Folder"
+          multiple
+        />
       </DialogContent>
     </Dialog>
   );
