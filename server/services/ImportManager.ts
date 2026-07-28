@@ -123,14 +123,15 @@ export class ImportManager {
   }
 
   private resolvePlatformFolderName(downloadTitle: string, game: { platforms?: unknown }): string {
-    const key = this.getReleasePlatformKey(downloadTitle);
-    if (key && PLATFORM_FOLDER_NAMES[key]) return PLATFORM_FOLDER_NAMES[key];
-
+    // Prefer the game's IGDB platform over filename parsing
     const igdbId = this.getPrimaryPlatformId(game);
     if (igdbId !== undefined) {
       const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
       if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) return PLATFORM_FOLDER_NAMES[igdbKey];
     }
+
+    const key = this.getReleasePlatformKey(downloadTitle);
+    if (key && PLATFORM_FOLDER_NAMES[key]) return PLATFORM_FOLDER_NAMES[key];
 
     return "PC";
   }
