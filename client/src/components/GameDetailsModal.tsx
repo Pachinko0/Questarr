@@ -131,6 +131,7 @@ const IGDB_CATEGORY_LABELS: Record<number, string> = {
   11: "Port",
   12: "Fork",
   13: "Pack",
+  14: "Update",
 };
 
 const IGDB_CATEGORY_COLORS: Record<number, string> = {
@@ -148,6 +149,7 @@ const IGDB_CATEGORY_COLORS: Record<number, string> = {
   11: "bg-slate-600/30 text-slate-300 border-slate-500/40",
   12: "bg-slate-600/30 text-slate-300 border-slate-500/40",
   13: "bg-amber-600/30 text-amber-300 border-amber-500/40",
+  14: "bg-green-600/30 text-green-300 border-green-500/40",
 };
 
 function ContentSummary({ summary }: { summary: string }) {
@@ -1557,8 +1559,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                       </CardContent>
                     </Card>
                   ))}
-                  {/* Scan button */}
-                  <div className="flex justify-center pt-2">
+                  {/* Scan + Import buttons */}
+                  <div className="flex justify-center gap-2 pt-2">
                     <Button
                       variant="secondary"
                       size="sm"
@@ -1599,6 +1601,18 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                     >
                       <Scan className={`h-4 w-4 ${scanningDisk ? "animate-spin" : ""}`} />
                       {scanningDisk ? "Scanning…" : "Scan Disk"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => {
+                        setImportTargetCategory("");
+                        setManualImportOpen(true);
+                      }}
+                    >
+                      <Upload className="h-4 w-4" />
+                      Manual Import
                     </Button>
                   </div>
                   {/* Scan results */}

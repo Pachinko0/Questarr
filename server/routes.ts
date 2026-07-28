@@ -2023,8 +2023,7 @@ fileSize: f.fileSize,
           }
         }
 
-        // Add file-only categories not already covered by IGDB expansions
-        const coveredCategories = new Set(slots.map((s) => s.category));
+        // Add file-only slots for files not linked to any IGDB content item
         const fileCategories = ["dlc", "update", "extra"] as const;
         const categoryLabels: Record<string, string> = {
           dlc: "DLC & Expansions",
@@ -2032,7 +2031,6 @@ fileSize: f.fileSize,
           extra: "Extras",
         };
         for (const cat of fileCategories) {
-          if (coveredCategories.has(cat)) continue;
           const files = gameFiles.filter((f) => f.category === cat);
           if (files.length > 0) {
             slots.push({

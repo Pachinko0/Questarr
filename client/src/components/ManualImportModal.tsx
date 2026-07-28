@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Dialog,
@@ -55,18 +55,20 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
   const [assignments, setAssignments] = useState<ImportAssignment[]>([]);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
+  const hasSelectedFiles = useRef(false);
 
   const isSingleFile = !!game;
 
   useEffect(() => {
     if (open) {
       setFileBrowserOpen(true);
+      hasSelectedFiles.current = false;
     }
   }, [open]);
 
   const handleFileBrowserChange = (open: boolean) => {
     setFileBrowserOpen(open);
-    if (!open && step === "scan" && scannedFiles.length === 0) {
+    if (!open && !hasSelectedFiles.current && step === "scan" && scannedFiles.length === 0) {
       onOpenChange(false);
     }
   };
@@ -98,6 +100,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
   };
 
   const handleMultiFileSelect = (paths: string[]) => {
+    hasSelectedFiles.current = true;
     setFileBrowserOpen(false);
     const files: ScannedFile[] = paths.map((p) => ({
       name: p.split("/").pop() || p.split("\\").pop() || p,
@@ -379,12 +382,13 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
         <FileBrowser
           open={fileBrowserOpen}
           onOpenChange={handleFileBrowserChange}
-          onSelect={handleFolderSelect}
-          onMultiSelect={handleMultiFileSelect}
+          onSelect={isSingleFile ? (p) => handleMultiFileSelect([p]) : handleFolderSelect}
+          onMultiSelect={isSingleFile ? undefined : handleMultiFileSelect}
           root="/"
           title="Select Files or Folder"
           shortcuts={libraryShortcuts}
-          multiple
+          multiple={!isSingleFile}
+          mode={isSingleFile ? "file" : undefined}
         />
       </DialogContent>
     </Dialog>
