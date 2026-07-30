@@ -1983,6 +1983,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
+
+              const itemSource = (expansions as Array<{ id: number }>).some((e) => e.id === item.id) ? "expansions"
+                : (dlcs as Array<{ id: number }>).some((d) => d.id === item.id) ? "dlcs"
+                : (standalone as Array<{ id: number }>).some((s) => s.id === item.id) ? "standalone"
+                : (expandedGames as Array<{ id: number }>).some((eg) => eg.id === item.id) ? "expandedGames"
+                : "parentGames";
+
+              routesLogger.debug(
+                { itemId: item.id, itemName: item.name, itemCategory: item.category, fallbackCategory: sourceCategory.get(item.id), itemSource },
+                "Content group item"
+              );
               const existingGame = userGames.find((g) => g.igdbId === item.id);
               const itemCategory =
                 item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
@@ -2035,6 +2046,11 @@ fileSize: f.fileSize,
                     slot.igdbCategory = catMap.get(slot.igdbId)!;
                   }
                 }
+                const stillMissing = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => ({ id: s.igdbId!, name: s.label }));
+                routesLogger.debug(
+                  { missingCatIds, batchFetchedCount: catGames.length, resolvedCount: catMap.size, stillMissing },
+                  "Batch-fetch missing categories result"
+                );
               } catch (err) {
                 routesLogger.warn({ err, ids: missingCatIds }, "Failed to fetch missing categories");
               }
