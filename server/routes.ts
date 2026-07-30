@@ -1983,7 +1983,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
-              routesLogger.info({ itemId: item.id, itemName: item.name, itemCategory: item.category, sourceCat: sourceCategory.get(item.id) }, "Content group item");
               const existingGame = userGames.find((g) => g.igdbId === item.id);
               const itemCategory =
                 item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
@@ -2018,6 +2017,27 @@ fileSize: f.fileSize,
             }
             if (seen.size === 0) {
               routesLogger.info({ igdbId: game.igdbId }, "No expansions/DLCs returned from IGDB");
+            }
+
+            // Batch-fetch missing categories from IGDB for items where category was not returned
+            const missingCatIds = slots
+              .filter((s) => s.igdbId != null && s.igdbCategory == null)
+              .map((s) => s.igdbId!);
+            if (missingCatIds.length > 0) {
+              try {
+                const catGames = await igdbClient.getGamesByIds(missingCatIds);
+                const catMap = new Map<number, number>();
+                for (const g of catGames) {
+                  if (g.category != null) catMap.set(g.id, g.category);
+                }
+                for (const slot of slots) {
+                  if (slot.igdbId != null && catMap.has(slot.igdbId)) {
+                    slot.igdbCategory = catMap.get(slot.igdbId)!;
+                  }
+                }
+              } catch (err) {
+                routesLogger.warn({ err, ids: missingCatIds }, "Failed to fetch missing categories");
+              }
             }
           } catch (err) {
             routesLogger.warn({ error: err, igdbId: game.igdbId }, "Failed to fetch IGDB expansions");
