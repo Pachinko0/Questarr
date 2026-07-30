@@ -15,7 +15,7 @@ export const IGDB_EARLY_ACCESS_STATUS = 4;
 
 // Shared field list for all IGDB game queries
 const IGDB_GAME_FIELDS =
-  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, themes.name, age_ratings.category, age_ratings.rating, screenshots.url, videos.video_id, videos.name, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status, category, expansions.name, expansions.summary, expansions.cover.url, expansions.first_release_date, expansions.rating, expansions.aggregated_rating, expansions.category, dlcs.name, dlcs.summary, dlcs.cover.url, dlcs.first_release_date, dlcs.rating, dlcs.aggregated_rating, dlcs.category, standalone_expansions.name, standalone_expansions.summary, standalone_expansions.cover.url, standalone_expansions.first_release_date, standalone_expansions.rating, standalone_expansions.aggregated_rating, standalone_expansions.category, expanded_games.name, expanded_games.summary, expanded_games.cover.url, expanded_games.first_release_date, expanded_games.rating, expanded_games.aggregated_rating, expanded_games.category";
+  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, themes.name, age_ratings.category, age_ratings.rating, screenshots.url, videos.video_id, videos.name, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status, category, game_type, expansions.name, expansions.summary, expansions.cover.url, expansions.first_release_date, expansions.rating, expansions.aggregated_rating, expansions.category, expansions.game_type, dlcs.name, dlcs.summary, dlcs.cover.url, dlcs.first_release_date, dlcs.rating, dlcs.aggregated_rating, dlcs.category, dlcs.game_type, standalone_expansions.name, standalone_expansions.summary, standalone_expansions.cover.url, standalone_expansions.first_release_date, standalone_expansions.rating, standalone_expansions.aggregated_rating, standalone_expansions.category, standalone_expansions.game_type, expanded_games.name, expanded_games.summary, expanded_games.cover.url, expanded_games.first_release_date, expanded_games.rating, expanded_games.aggregated_rating, expanded_games.category, expanded_games.game_type";
 
 // IGDB theme name flagged as adult content (Erotic)
 const ADULT_THEME_NAMES = new Set(["Erotic"]);
@@ -85,6 +85,7 @@ export interface IGDBGame {
   }>;
   status?: number;
   category?: number;
+  game_type?: number;
   expansions?: Array<{
     id: number;
     name: string;
@@ -94,6 +95,7 @@ export interface IGDBGame {
     rating?: number;
     aggregated_rating?: number;
     category?: number;
+    game_type?: number;
   }>;
   dlcs?: Array<{
     id: number;
@@ -104,6 +106,7 @@ export interface IGDBGame {
     rating?: number;
     aggregated_rating?: number;
     category?: number;
+    game_type?: number;
   }>;
   standalone_expansions?: Array<{
     id: number;
@@ -114,6 +117,7 @@ export interface IGDBGame {
     rating?: number;
     aggregated_rating?: number;
     category?: number;
+    game_type?: number;
   }>;
   expanded_games?: Array<{
     id: number;
@@ -124,6 +128,7 @@ export interface IGDBGame {
     rating?: number;
     aggregated_rating?: number;
     category?: number;
+    game_type?: number;
   }>;
 }
 
@@ -761,11 +766,11 @@ class IGDBClient {
     return allResults;
   }
 
-  // Fetch only category field for given game IDs (minimal query to test IGDB's field truncation)
+  // Fetch category + game_type for given game IDs (minimal query avoids field-drop issues)
   async getGamesCategoryByIds(ids: number[]): Promise<IGDBGame[]> {
     if (!(await this.ensureConfigured())) return [];
     if (ids.length === 0) return [];
-    const igdbQuery = `fields category; where id = (${ids.join(",")}); limit ${ids.length};`;
+    const igdbQuery = `fields category,game_type; where id = (${ids.join(",")}); limit ${ids.length};`;
     return this.makeRequest<IGDBGame[]>("games", igdbQuery, HOUR_IN_SECONDS * 1000, true);
   }
 

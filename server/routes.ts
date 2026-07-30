@@ -2023,7 +2023,7 @@ fileSize: f.fileSize,
               rating: item.rating ?? null,
               aggregatedRating: item.aggregated_rating ?? null,
               releaseDate: item.first_release_date ?? null,
-              igdbCategory: item.category ?? sourceCategory.get(item.id) ?? null,
+              igdbCategory: item.category ?? item.game_type ?? sourceCategory.get(item.id) ?? null,
               });
             }
             if (seen.size === 0) {
@@ -2040,13 +2040,14 @@ fileSize: f.fileSize,
                 // Debug: log raw fields from IGDB response for first missing game
                 if (catGames.length > 0) {
                   routesLogger.info(
-                    { allGames: catGames.map(g => ({ id: g.id, name: g.name, category: g.category, keys: Object.keys(g) })) },
+                    { allGames: catGames.map(g => ({ id: g.id, name: g.name, category: g.category, game_type: g.game_type, keys: Object.keys(g) })) },
                     "Raw IGDB response for batch-fetched games"
                   );
                 }
                 const catMap = new Map<number, number>();
                 for (const g of catGames) {
                   if (g.category != null) catMap.set(g.id, g.category);
+                  else if (g.game_type != null) catMap.set(g.id, g.game_type);
                 }
                 for (const slot of slots) {
                   if (slot.igdbId != null && catMap.has(slot.igdbId)) {
@@ -2064,14 +2065,15 @@ fileSize: f.fileSize,
                   try {
                     const catGames2 = await igdbClient.getGamesCategoryByIds(secondTryIds);
                     for (const g of catGames2) {
-                      if (g.category != null) {
+                      const cat = g.category ?? g.game_type;
+                      if (cat != null) {
                         const slot = slots.find(s => s.igdbId === g.id);
-                        if (slot) slot.igdbCategory = g.category;
+                        if (slot) slot.igdbCategory = cat;
                       }
                     }
                     const stillMissing2 = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => ({ id: s.igdbId!, name: s.label }));
                     routesLogger.info(
-                      { secondTryIds, results2: catGames2.map(g => ({ id: g.id, category: g.category })), stillMissing2 },
+                      { secondTryIds, results2: catGames2.map(g => ({ id: g.id, category: g.category, game_type: g.game_type })), stillMissing2 },
                       "Second batch-fetch (minimal fields) result"
                     );
                   } catch (err) {
