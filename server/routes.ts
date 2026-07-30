@@ -2046,11 +2046,18 @@ fileSize: f.fileSize,
                     slot.igdbCategory = catMap.get(slot.igdbId)!;
                   }
                 }
-                const stillMissing = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => ({ id: s.igdbId!, name: s.label }));
+                const stillMissing = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => ({ id: s.igdbId!, name: s.label, cat: s.category }));
                 routesLogger.info(
                   { missingCatIds, batchFetchedCount: catGames.length, resolvedCount: catMap.size, stillMissing },
                   "Batch-fetch missing categories result"
                 );
+                // Fallback: use file category to infer IGDB category for items still missing
+                const CATEGORY_FALLBACK: Record<string, number> = { dlc: 1, update: 14 };
+                for (const slot of slots) {
+                  if (slot.igdbId != null && slot.igdbCategory == null && CATEGORY_FALLBACK[slot.category] != null) {
+                    slot.igdbCategory = CATEGORY_FALLBACK[slot.category];
+                  }
+                }
               } catch (err) {
                 routesLogger.warn({ err, ids: missingCatIds }, "Failed to fetch missing categories");
               }
