@@ -1983,7 +1983,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
-              routesLogger.info({ itemId: item.id, itemName: item.name, itemCategory: item.category, sourceCat: sourceCategory.get(item.id) }, "Content group item");
               const existingGame = userGames.find((g) => g.igdbId === item.id);
               const itemCategory =
                 item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
@@ -2013,7 +2012,7 @@ fileSize: f.fileSize,
               rating: item.rating ?? null,
               aggregatedRating: item.aggregated_rating ?? null,
               releaseDate: item.first_release_date ?? null,
-              igdbCategory: item.category ?? sourceCategory.get(item.id) ?? null,
+              igdbCategory: item.category ?? sourceCategory.get(item.id) ?? (itemCategory === "dlc" ? 1 : itemCategory === "update" ? 14 : null),
               });
             }
             if (seen.size === 0) {
