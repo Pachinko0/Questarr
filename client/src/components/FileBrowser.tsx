@@ -223,11 +223,39 @@ export function FileBrowser({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl h-[500px] flex flex-col">
-        <DialogHeader>
+        <DialogHeader className="pb-2">
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>
-            {multiple ? "Navigate and select files" : mode === "file" ? "Navigate and select a file" : "Navigate and select a directory"}
-          </DialogDescription>
+          <div className="flex items-center justify-between">
+            <DialogDescription className="m-0">
+              {multiple ? "Navigate and select files" : mode === "file" ? "Navigate and select a file" : "Navigate and select a directory"}
+            </DialogDescription>
+            <div className="flex items-center gap-1.5">
+              {shortcuts?.map((s) => (
+                <Button
+                  key={s.path}
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPath === s.path}
+                  onClick={() => handleNavigate(s.path)}
+                  title={s.path}
+                  className="h-7 text-xs"
+                >
+                  {s.label}
+                </Button>
+              ))}
+              {currentPath !== "/" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleNavigate("/")}
+                  className="h-7 w-7 p-0"
+                  title="Root"
+                >
+                  <Home className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          </div>
         </DialogHeader>
 
         <div className="flex items-center gap-2 p-2 bg-muted rounded-md mb-2">
@@ -245,35 +273,6 @@ export function FileBrowser({
             <CornerLeftUp className="h-4 w-4" />
           </Button>
         </div>
-
-        {(shortcuts || currentPath !== "/") && (
-          <div className="flex items-center gap-1.5 mb-2 justify-end">
-            {shortcuts?.map((s) => (
-              <Button
-                key={s.path}
-                variant="outline"
-                size="sm"
-                disabled={currentPath === s.path}
-                onClick={() => handleNavigate(s.path)}
-                title={s.path}
-                className="h-7 text-xs"
-              >
-                {s.label}
-              </Button>
-            ))}
-            {currentPath !== "/" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleNavigate("/")}
-                className="h-7 text-xs gap-1"
-              >
-                <Home className="h-3 w-3" />
-                Root
-              </Button>
-            )}
-          </div>
-        )}
 
         {recentPaths.length > 0 && (
           <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
