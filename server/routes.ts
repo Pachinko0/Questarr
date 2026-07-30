@@ -1983,7 +1983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             for (const item of contentGroups) {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
-              routesLogger.debug({ itemId: item.id, itemName: item.name, itemCategory: item.category, sourceCat: sourceCategory.get(item.id) }, "Content group item");
+              routesLogger.info({ itemId: item.id, itemName: item.name, itemCategory: item.category, sourceCat: sourceCategory.get(item.id) }, "Content group item");
               const existingGame = userGames.find((g) => g.igdbId === item.id);
               const itemCategory =
                 item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
