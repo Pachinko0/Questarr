@@ -1824,6 +1824,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!game) return;
 
         if (!game.libraryPath) {
+          routesLogger.info({ gameId: game.id, title: game.title }, "Scan disk: no libraryPath set");
           return res.json({ files: [] });
         }
 
@@ -1832,9 +1833,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let entries: string[];
         try {
           entries = await fs.promises.readdir(gameDir);
+          routesLogger.info({ gameId: game.id, gameDir, entryCount: entries.length }, "Scan disk: read directory");
         } catch (err) {
           const fsError = err as NodeJS.ErrnoException;
           if (fsError.code === "ENOENT") {
+            routesLogger.info({ gameId: game.id, gameDir }, "Scan disk: directory not found (ENOENT)");
             return res.json({ files: [] });
           }
           throw err;
