@@ -2037,6 +2037,13 @@ fileSize: f.fileSize,
             if (missingCatIds.length > 0) {
               try {
                 const catGames = await igdbClient.getGamesByIds(missingCatIds);
+                // Debug: log raw fields from IGDB response for first missing game
+                if (catGames.length > 0) {
+                  routesLogger.info(
+                    { allGames: catGames.map(g => ({ id: g.id, name: g.name, category: g.category, keys: Object.keys(g) })) },
+                    "Raw IGDB response for batch-fetched games"
+                  );
+                }
                 const catMap = new Map<number, number>();
                 for (const g of catGames) {
                   if (g.category != null) catMap.set(g.id, g.category);
