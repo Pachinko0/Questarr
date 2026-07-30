@@ -1990,7 +1990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 : (expandedGames as Array<{ id: number }>).some((eg) => eg.id === item.id) ? "expandedGames"
                 : "parentGames";
 
-              routesLogger.debug(
+              routesLogger.info(
                 { itemId: item.id, itemName: item.name, itemCategory: item.category, fallbackCategory: sourceCategory.get(item.id), itemSource },
                 "Content group item"
               );
@@ -2047,7 +2047,7 @@ fileSize: f.fileSize,
                   }
                 }
                 const stillMissing = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => ({ id: s.igdbId!, name: s.label }));
-                routesLogger.debug(
+                routesLogger.info(
                   { missingCatIds, batchFetchedCount: catGames.length, resolvedCount: catMap.size, stillMissing },
                   "Batch-fetch missing categories result"
                 );
