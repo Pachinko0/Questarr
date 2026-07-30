@@ -2058,11 +2058,30 @@ fileSize: f.fileSize,
                   { missingCatIds, batchFetchedCount: catGames.length, resolvedCount: catMap.size, stillMissing },
                   "Batch-fetch missing categories result"
                 );
-                // Fallback: use file category to infer IGDB category for items still missing
-                const CATEGORY_FALLBACK: Record<string, number> = { dlc: 1, update: 14 };
+                // Try minimal query (fields category only) in case IGDB truncates long field lists
+                const secondTryIds = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => s.igdbId!);
+                if (secondTryIds.length > 0) {
+                  try {
+                    const catGames2 = await igdbClient.getGamesCategoryByIds(secondTryIds);
+                    for (const g of catGames2) {
+                      if (g.category != null) {
+                        const slot = slots.find(s => s.igdbId === g.id);
+                        if (slot) slot.igdbCategory = g.category;
+                      }
+                    }
+                    const stillMissing2 = slots.filter(s => s.igdbId != null && s.igdbCategory == null).map(s => ({ id: s.igdbId!, name: s.label }));
+                    routesLogger.info(
+                      { secondTryIds, results2: catGames2.map(g => ({ id: g.id, category: g.category })), stillMissing2 },
+                      "Second batch-fetch (minimal fields) result"
+                    );
+                  } catch (err) {
+                    routesLogger.warn({ err, ids: secondTryIds }, "Failed second batch-fetch for missing categories");
+                  }
+                }
+                // Name-based fallback for items still missing category from IGDB
                 for (const slot of slots) {
-                  if (slot.igdbId != null && slot.igdbCategory == null && CATEGORY_FALLBACK[slot.category] != null) {
-                    slot.igdbCategory = CATEGORY_FALLBACK[slot.category];
+                  if (slot.igdbId != null && slot.igdbCategory == null) {
+                    slot.igdbCategory = /\bpack\b/i.test(slot.label) ? 13 : 14;
                   }
                 }
               } catch (err) {

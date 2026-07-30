@@ -761,6 +761,14 @@ class IGDBClient {
     return allResults;
   }
 
+  // Fetch only category field for given game IDs (minimal query to test IGDB's field truncation)
+  async getGamesCategoryByIds(ids: number[]): Promise<IGDBGame[]> {
+    if (!(await this.ensureConfigured())) return [];
+    if (ids.length === 0) return [];
+    const igdbQuery = `fields category; where id = (${ids.join(",")}); limit ${ids.length};`;
+    return this.makeRequest<IGDBGame[]>("games", igdbQuery, HOUR_IN_SECONDS * 1000, true);
+  }
+
   /** Returns the current Unix timestamp (seconds) floored to the nearest hour. */
   private currentHourTimestamp(): number {
     return Math.floor(Date.now() / (HOUR_IN_SECONDS * 1000)) * HOUR_IN_SECONDS;
