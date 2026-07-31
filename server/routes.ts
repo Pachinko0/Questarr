@@ -1836,13 +1836,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const cleanTitle = sanitizeFsName(game.title);
         const expectedGameDir = path.join(gameDir, cleanTitle);
         let resolvedDir = gameDir;
+        let subdirFound = false;
         try {
           if (cleanTitle && (await fs.promises.stat(expectedGameDir)).isDirectory()) {
             resolvedDir = expectedGameDir;
+            subdirFound = true;
           }
         } catch {
           // expected subdirectory doesn't exist; use libraryPath as-is
         }
+        routesLogger.info(
+          { gameId: game.id, title: game.title, libraryPath: game.libraryPath, gameDir, cleanTitle, expectedGameDir, subdirFound, resolvedDir },
+          "Scan disk: path resolution"
+        );
 
         const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
         const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> = [];
