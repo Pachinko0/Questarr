@@ -45,7 +45,7 @@ const RELEASE_PLATFORM_TO_IGDB_ID: Record<string, number> = {
 };
 
 // Maps IGDB platform names (as stored in game.platforms) to folder keys used in PLATFORM_FOLDER_NAMES
-const IGDB_PLATFORM_NAME_TO_KEY: Record<string, string> = {
+export const IGDB_PLATFORM_NAME_TO_KEY: Record<string, string> = {
   "nintendo switch": "switch",
   "pc (microsoft windows)": "pc",
   "playstation 5": "ps5",
@@ -840,6 +840,8 @@ export class ImportManager {
 
     const result = await strategy.executeImport(plan, config.transferMode);
 
-    return { destDir: path.dirname(result.destDir), newPath: result.destDir, fileSize: stats.size };
+    const ext = path.extname(result.destDir);
+    const destDir = ext ? path.dirname(result.destDir) : result.destDir;
+    return { destDir, newPath: result.destDir, fileSize: stats.size };
   }
 }

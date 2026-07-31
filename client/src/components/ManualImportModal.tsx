@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Loader2, Upload, Search, Check, X, AlertCircle } from "lucide-react";
+import { Loader2, Upload, Search, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { FileBrowser } from "./FileBrowser";
@@ -48,13 +48,11 @@ interface ImportResult {
 
 export default function ManualImportModal({ open, onOpenChange, game, defaultCategory }: ManualImportModalProps) {
   const { toast } = useToast();
-  const [step, setStep] = useState<"scan" | "assign" | "importing" | "done">("scan");
+  const [step, setStep] = useState<"scan" | "assign">("scan");
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [scanPath, setScanPath] = useState("");
   const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
   const [assignments, setAssignments] = useState<ImportAssignment[]>([]);
-  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
-  const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const hasSelectedFiles = useRef(false);
 
   const isSingleFile = !!game;
@@ -79,7 +77,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
   });
 
   const { data: platformFolders = [] } = useQuery<string[]>({
-    queryKey: ["/api/platform-folders"],
+    queryKey: game ? ["/api/platform-folders?gameId=" + game.id] : ["/api/platform-folders"],
     enabled: open,
   });
 
@@ -138,7 +136,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
           platformDir: "",
         }))
       );
-      setStep(files.length > 0 ? "assign" : "done");
+      setStep(files.length > 0 ? "assign" : "scan");
       if (files.length === 0) {
         toast({ description: "No supported files found in that location" });
       }
@@ -148,6 +146,8 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
     },
   });
 
+  const importToastRef = useRef<any>(null);
+
   const executeMutation = useMutation({
     mutationFn: async () => {
       const validAssignments = assignments.filter((a) => a.gameId);
@@ -155,7 +155,6 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
 
       const results: ImportResult[] = [];
       for (let i = 0; i < validAssignments.length; i++) {
-        setImportProgress({ current: i + 1, total: validAssignments.length });
         const a = validAssignments[i];
         try {
           const body: Record<string, string> = {
@@ -177,17 +176,23 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
       return results;
     },
     onSuccess: (results) => {
-      setImportResults(results);
-      setStep("done");
       queryClient.invalidateQueries({ queryKey: ["/api/games"] });
       const successCount = results.filter((r) => r.success).length;
-      toast({ description: `Imported ${successCount} of ${results.length} files` });
+      if (importToastRef.current) {
+        importToastRef.current.update({ description: `Imported ${successCount} of ${results.length} files` });
+        importToastRef.current = null;
+      }
     },
     onMutate: () => {
       const count = assignments.filter((a) => a.gameId).length;
-      toast({ description: `Importing ${count} file${count !== 1 ? "s" : ""}...` });
+      importToastRef.current = toast({ description: `Importing ${count} file${count !== 1 ? "s" : ""}...` });
+      onOpenChange(false);
     },
     onError: (err: Error) => {
+      if (importToastRef.current) {
+        importToastRef.current.dismiss();
+        importToastRef.current = null;
+      }
       toast({ description: err.message, variant: "destructive" });
     },
   });
@@ -214,8 +219,6 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
     setScanPath("");
     setScannedFiles([]);
     setAssignments([]);
-    setImportResults([]);
-    setImportProgress({ current: 0, total: 0 });
   };
 
   return (
@@ -226,8 +229,6 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
           <DialogDescription>
             {step === "scan" && "Scanning folder..."}
             {step === "assign" && (isSingleFile ? "Confirm import details" : `Assign ${scannedFiles.length} file(s) to games`)}
-            {step === "importing" && `Importing ${importProgress.current} of ${importProgress.total}...`}
-            {step === "done" && "Import complete"}
           </DialogDescription>
         </DialogHeader>
 
@@ -327,10 +328,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
             <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={reset}>Back</Button>
               <Button
-                onClick={() => {
-                  setStep("importing");
-                  executeMutation.mutate();
-                }}
+                onClick={() => executeMutation.mutate()}
                 disabled={!assignments.some((a) => a.gameId) || executeMutation.isPending}
                 className="gap-2"
               >
@@ -339,44 +337,6 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
               </Button>
             </div>
           </>
-        )}
-
-        {step === "importing" && (
-          <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">
-              Importing {importProgress.current} of {importProgress.total}...
-            </p>
-            <p className="text-xs text-muted-foreground">{scanPath}</p>
-          </div>
-        )}
-
-        {step === "done" && (
-          <div className="space-y-3">
-            <ScrollArea className="max-h-64 border rounded-md">
-              <div className="divide-y">
-                {importResults.map((r, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 text-sm">
-                    {r.success ? (
-                      <Check className="w-4 h-4 text-emerald-500 shrink-0" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate">{r.filePath.split("/").pop()}</p>
-                      {!r.success && <p className="text-xs text-destructive">{r.error}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-            <div className="flex justify-between items-center pt-2">
-              <p className="text-sm text-muted-foreground">
-                {importResults.filter((r) => r.success).length} succeeded, {importResults.filter((r) => !r.success).length} failed
-              </p>
-              <Button onClick={() => onOpenChange(false)}>Done</Button>
-            </div>
-          </div>
         )}
 
         <FileBrowser

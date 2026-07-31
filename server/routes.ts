@@ -105,7 +105,7 @@ import { importRouter } from "./routes/import.js";
 import { importTasksRouter } from "./routes/import-tasks.js";
 import { systemRouter } from "./routes/system.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
-import { importManager, PLATFORM_FOLDER_NAMES, OLD_PLATFORM_FOLDER_NAMES } from "./services/index.js";
+import { importManager, PLATFORM_FOLDER_NAMES, OLD_PLATFORM_FOLDER_NAMES, IGDB_PLATFORM_NAME_TO_KEY } from "./services/index.js";
 
 // Cache-Control header values for IGDB discovery endpoints
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
@@ -1811,7 +1811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get files on disk for a specific game
+  // Recursively scan a game's library folder for files on disk
   app.get(
     "/api/games/:gameId/files",
     authenticateToken,
@@ -1830,67 +1830,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const gameDir = path.resolve(game.libraryPath);
 
-        let entries: string[];
-        try {
-          entries = await fs.promises.readdir(gameDir);
-          routesLogger.info({ gameId: game.id, gameDir, entryCount: entries.length }, "Scan disk: read directory");
-        } catch (err) {
-          const fsError = err as NodeJS.ErrnoException;
-          if (fsError.code === "ENOENT") {
-            routesLogger.info({ gameId: game.id, gameDir }, "Scan disk: directory not found (ENOENT)");
-            return res.json({ files: [] });
-          }
-          throw err;
-        }
-
         const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
         const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> = [];
 
-        for (const entry of entries) {
-          const fullPath = path.join(gameDir, entry);
-          let stat: fs.Stats;
+        async function walkDir(dir: string, parentCategory: string): Promise<void> {
+          let entries: string[];
           try {
-            stat = await fs.promises.stat(fullPath);
+            entries = await fs.promises.readdir(dir);
           } catch {
-            continue;
+            return;
           }
 
-          const isDirectory = stat.isDirectory();
-          const lowerName = entry.toLowerCase();
-
-          if (isDirectory && CATEGORY_SUBDIRS.has(lowerName)) {
-            let subEntries: string[];
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry);
+            let stat: fs.Stats;
             try {
-              subEntries = await fs.promises.readdir(fullPath);
+              stat = await fs.promises.stat(fullPath);
             } catch {
               continue;
             }
-            for (const sub of subEntries) {
-              const subFullPath = path.join(fullPath, sub);
-              try {
-                const subStat = await fs.promises.stat(subFullPath);
-                files.push({
-                  name: sub,
-                  path: subFullPath,
-                  category: lowerName,
-                  isDirectory: subStat.isDirectory(),
-                });
-              } catch {
-                continue;
+
+            const isDirectory = stat.isDirectory();
+            const lowerName = entry.toLowerCase();
+
+            if (isDirectory) {
+              if (CATEGORY_SUBDIRS.has(lowerName)) {
+                await walkDir(fullPath, lowerName);
+              } else {
+                await walkDir(fullPath, parentCategory);
               }
+            } else {
+              files.push({
+                name: entry,
+                path: fullPath,
+                category: parentCategory || (() => { const { category } = categorizeDownload(path.parse(entry).name); return category; })(),
+                isDirectory: false,
+              });
             }
-          } else {
-            const nameWithoutExt = path.parse(entry).name;
-            const { category } = categorizeDownload(nameWithoutExt);
-            files.push({
-              name: entry,
-              path: fullPath,
-              category,
-              isDirectory,
-            });
           }
         }
 
+        await walkDir(gameDir, "");
+        routesLogger.info({ gameId: game.id, gameDir, fileCount: files.length }, "Scan disk: recursive scan complete");
         res.json({ files });
       } catch (error) {
         routesLogger.error({ error }, "error fetching game files");
@@ -2119,7 +2100,22 @@ fileSize: f.fileSize,
   app.get(
     "/api/platform-folders",
     authenticateToken,
-    async (_req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
+      const gameId = req.query.gameId as string | undefined;
+      if (gameId) {
+        const game = await storage.getGame(gameId);
+        if (game && Array.isArray(game.platforms)) {
+          const matched = new Set<string>();
+          for (const p of game.platforms) {
+            const name = typeof p === "string" ? p.toLowerCase().trim() : "";
+            const folderKey = IGDB_PLATFORM_NAME_TO_KEY[name];
+            if (folderKey && PLATFORM_FOLDER_NAMES[folderKey]) {
+              matched.add(PLATFORM_FOLDER_NAMES[folderKey]);
+            }
+          }
+          return res.json([...matched].sort());
+        }
+      }
       const folders = Object.values(PLATFORM_FOLDER_NAMES);
       res.json(folders);
     }

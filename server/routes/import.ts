@@ -115,6 +115,8 @@ async function checkHardlinkPair(
   targetPath: string;
   supported: boolean;
   sameDevice: boolean;
+  sourceDev?: number;
+  targetDev?: number;
   reason?: string;
 }> {
   const resolvedSource = path.resolve(sourcePath);
@@ -159,6 +161,8 @@ async function checkHardlinkPair(
       targetPath: targetDir,
       supported: false,
       sameDevice,
+      sourceDev: sourceStats.dev,
+      targetDev: targetStats.dev,
       reason: "Source and target are on different filesystems/devices",
     };
   }
@@ -174,6 +178,8 @@ async function checkHardlinkPair(
       targetPath: targetDir,
       supported: true,
       sameDevice,
+      sourceDev: sourceStats.dev,
+      targetDev: targetStats.dev,
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
@@ -182,6 +188,8 @@ async function checkHardlinkPair(
       targetPath: targetDir,
       supported: false,
       sameDevice,
+      sourceDev: sourceStats.dev,
+      targetDev: targetStats.dev,
       reason: `Hardlink probe failed (${code})`,
     };
   } finally {
@@ -368,6 +376,15 @@ importRouter.get("/hardlink/check", async (req, res) => {
       )
     );
 
+    logger.info(
+      {
+        sourceRoots,
+        libraryRoot: config.libraryRoot,
+        rawDownloadPaths: downloaders.map((d) => ({ id: d.id, downloadPath: d.downloadPath })),
+      },
+      "[HardlinkCheck] resolved source roots"
+    );
+
     if (sourceRoots.length === 0) {
       return res.json({
         generic: {
@@ -389,6 +406,8 @@ importRouter.get("/hardlink/check", async (req, res) => {
         targetPath: string;
         supported: boolean;
         sameDevice: boolean;
+        sourceDev?: number;
+        targetDev?: number;
         reason?: string;
       }>
     ) => {
