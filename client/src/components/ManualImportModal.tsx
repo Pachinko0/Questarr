@@ -263,8 +263,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
                         <option value="main">Main Game</option>
                         <option value="dlc">DLC</option>
                         <option value="update">Update</option>
-                        <option value="packs">Packs</option>
-                        <option value="addons">Addons</option>
+                        <option value="packs">Packs/Addons</option>
                         <option value="extra">Extra</option>
                       </select>
                     </div>

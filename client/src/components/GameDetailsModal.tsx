@@ -130,7 +130,7 @@ const IGDB_CATEGORY_LABELS: Record<number, string> = {
   10: "Expanded Game",
   11: "Port",
   12: "Fork",
-  13: "Pack",
+  13: "Pack/Addon",
   14: "Update",
 };
 
@@ -1680,8 +1680,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     <option value="main">Main</option>
                                     <option value="dlc">DLC</option>
                                     <option value="update">Update</option>
-                                    <option value="packs">Packs</option>
-                                    <option value="addons">Addons</option>
+                                    <option value="packs">Packs/Addons</option>
                                     <option value="extra">Extra</option>
                                   </select>
                                   <Button

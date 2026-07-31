@@ -820,7 +820,7 @@ export class ImportManager {
   async manualImportFile(
     filePath: string,
     game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
-    category: "main" | "dlc" | "update" | "extra" | "packs" | "addons",
+    category: "main" | "dlc" | "update" | "extra" | "packs",
     platformDir?: string
   ): Promise<{ destDir: string; newPath: string; fileSize: number }> {
     const config = await this.storage.getImportConfig(game.userId ?? undefined);

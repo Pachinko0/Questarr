@@ -5,7 +5,7 @@
  * based on common naming patterns in titles.
  */
 
-export type DownloadCategory = "main" | "update" | "dlc" | "extra" | "packs" | "addons";
+export type DownloadCategory = "main" | "update" | "dlc" | "extra" | "packs";
 
 export interface CategorizedDownload {
   category: DownloadCategory;
@@ -15,9 +15,7 @@ export interface CategorizedDownload {
 // Patterns for different download types
 const UPDATE_PATTERNS = [/\bupdate\b/i, /\bpatch\b/i, /\bhotfix\b/i, /\bcrackfix\b/i, /\bfix\b/i];
 
-const ADDONS_PATTERNS = [/\badd-?on\b/i];
-
-const PACKS_PATTERNS = [/\bpack\b/i];
+const PACKS_PATTERNS = [/\bpack\b/i, /\badd-?on\b/i];
 
 const DLC_PATTERNS = [
   /\bDLC\b/i,
@@ -54,14 +52,7 @@ export function categorizeDownload(title: string): CategorizedDownload {
     }
   }
 
-  // Check for addons
-  for (const pattern of ADDONS_PATTERNS) {
-    if (pattern.test(title)) {
-      return { category: "addons", confidence: 0.85 };
-    }
-  }
-
-  // Check for packs
+  // Check for packs/addons
   for (const pattern of PACKS_PATTERNS) {
     if (pattern.test(title)) {
       return { category: "packs", confidence: 0.85 };
@@ -102,7 +93,6 @@ export function groupDownloadsByCategory<T extends { title: string }>(
     dlc: [],
     extra: [],
     packs: [],
-    addons: [],
   };
 
   downloads.forEach((download) => {
@@ -127,8 +117,6 @@ export function getCategoryLabel(category: DownloadCategory): string {
     case "extra":
       return "Extras";
     case "packs":
-      return "Packs";
-    case "addons":
-      return "Addons";
+      return "Packs/Addons";
   }
 }

@@ -415,7 +415,7 @@ export const claimDownloadRequestSchema = z.object({
   downloadHash: z.string().min(1),
   downloadTitle: z.string().min(1),
   currentStatus: z.string().min(1),
-  category: z.enum(["main", "update", "dlc", "extra", "packs", "addons"]),
+  category: z.enum(["main", "update", "dlc", "extra", "packs"]),
   gameId: z.string().optional(),
   newGame: z
     .object({
@@ -446,8 +446,8 @@ export const downloadRulesSchema = z.object({
   minSeeders: z.number().int().min(0).default(0),
   sortBy: z.enum(["seeders", "date", "size"]).default("seeders"),
   visibleCategories: z
-    .array(z.enum(["main", "update", "dlc", "extra", "packs", "addons"]))
-    .default(["main", "update", "dlc", "extra", "packs", "addons"]),
+    .array(z.enum(["main", "update", "dlc", "extra", "packs"]))
+    .default(["main", "update", "dlc", "extra", "packs"]),
 });
 
 export type DownloadRules = z.infer<typeof downloadRulesSchema>;
@@ -831,7 +831,7 @@ export const gameFiles = sqliteTable(
       .references(() => gameDownloads.id, { onDelete: "set null" }),
     originalName: text("original_name").notNull(),
     storedName: text("stored_name").notNull(),
-    category: text("category").notNull().$type<"main" | "dlc" | "update" | "extra" | "packs" | "addons">(),
+    category: text("category").notNull().$type<"main" | "dlc" | "update" | "extra" | "packs">(),
     filePath: text("file_path").notNull(),
     fileSize: integer("file_size"),
     igdbContentId: integer("igdb_content_id"),

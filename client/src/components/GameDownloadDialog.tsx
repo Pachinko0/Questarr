@@ -241,7 +241,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showFilters, setShowFilters] = useState(false);
   const [visibleCategories, setVisibleCategories] = useState<Set<DownloadCategory>>(
-    new Set(["main", "update", "dlc", "extra", "packs", "addons"] as DownloadCategory[])
+    new Set(["main", "update", "dlc", "extra", "packs"] as DownloadCategory[])
   );
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
@@ -266,7 +266,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
     setSortBy("seeders");
     setSortOrder("desc");
     setShowFilters(false);
-    setVisibleCategories(new Set(["main", "update", "dlc", "extra", "packs", "addons"] as DownloadCategory[]));
+    setVisibleCategories(new Set(["main", "update", "dlc", "extra", "packs"] as DownloadCategory[]));
     setSelectedGroups([]);
     setSelectedPlatforms([]);
     defaultsAppliedRef.current = false;
@@ -426,7 +426,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
       update: [],
       dlc: [],
       packs: [],
-      addons: [],
       extra: [],
     };
 
@@ -843,7 +842,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
       <div className={cn("space-y-2", !isMobile && "col-span-4")}>
         <Label className="text-sm">Categories</Label>
         <div className="flex flex-wrap gap-2">
-          {(["main", "update", "dlc", "packs", "addons", "extra"] as const).map((cat) => (
+          {(["main", "update", "dlc", "packs", "extra"] as const).map((cat) => (
             <div key={cat} className="flex items-center">
               <Checkbox
                 id={`cat-${cat}`}
@@ -858,10 +857,8 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
                     : cat === "dlc"
                       ? "DLC"
                       : cat === "packs"
-                        ? "Packs"
-                        : cat === "addons"
-                          ? "Addons"
-                          : "Extras"}
+                        ? "Packs/Addons"
+                        : "Extras"}
               </label>
             </div>
           ))}
@@ -976,7 +973,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
                 </div>
               )}
 
-              {(["main", "update", "dlc", "packs", "addons", "extra"] as const).map((category) => {
+              {(["main", "update", "dlc", "packs", "extra"] as const).map((category) => {
                 const downloadsInCategory = filteredCategorizedDownloads[category] || [];
                 if (downloadsInCategory.length === 0) return null;
 
@@ -991,10 +988,8 @@ export default function GameDownloadDialog({ game, open, onOpenChange, contentIg
                             : category === "dlc"
                               ? "DLC & Expansions"
                               : category === "packs"
-                                ? "Packs"
-                                : category === "addons"
-                                  ? "Addons"
-                                  : "Extras"}
+                                ? "Packs/Addons"
+                                : "Extras"}
                       </h3>
                       <Badge variant="secondary" className="text-xs font-semibold">
                         {downloadsInCategory.length}

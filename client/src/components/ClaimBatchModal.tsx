@@ -59,8 +59,7 @@ const CATEGORY_LABELS: Record<DownloadCategory, string> = {
   main: "Main",
   update: "Update",
   dlc: "DLC",
-  packs: "Packs",
-  addons: "Addons",
+  packs: "Packs/Addons",
   extra: "Extra",
 };
 
@@ -69,7 +68,6 @@ const CATEGORY_COLORS: Record<DownloadCategory, string> = {
   update: "bg-yellow-500/20 text-yellow-400",
   dlc: "bg-purple-500/20 text-purple-400",
   packs: "bg-green-500/20 text-green-400",
-  addons: "bg-teal-500/20 text-teal-400",
   extra: "bg-gray-500/20 text-gray-400",
 };
 

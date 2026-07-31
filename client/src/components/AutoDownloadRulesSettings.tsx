@@ -38,13 +38,8 @@ const CATEGORY_DEFINITIONS = [
   },
   {
     value: "packs",
-    label: "Packs",
-    description: "Game packs and compilations",
-  },
-  {
-    value: "addons",
-    label: "Addons",
-    description: "Add-ons and supplementary content",
+    label: "Packs/Addons",
+    description: "Game packs, add-ons, and compilations",
   },
   {
     value: "extra",
@@ -56,7 +51,7 @@ const CATEGORY_DEFINITIONS = [
 const DEFAULT_RULES: DownloadRules = {
   minSeeders: 0,
   sortBy: "seeders",
-  visibleCategories: ["main", "update", "dlc", "extra", "packs", "addons"],
+  visibleCategories: ["main", "update", "dlc", "extra", "packs"],
 };
 
 export default function AutoDownloadRulesSettings({
