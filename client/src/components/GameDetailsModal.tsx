@@ -992,71 +992,83 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       {/* ── Tabs ── */}
       <Tabs defaultValue="overview" className="flex-1 flex flex-col min-h-0 mt-4">
         <TabsList className="flex-shrink-0 w-full justify-start overflow-x-auto">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TabsTrigger value="overview" aria-label="Overview" className="gap-1.5">
-                <Info className="h-3.5 w-3.5 sm:hidden" />
-                <span className="hidden sm:inline">Overview</span>
-              </TabsTrigger>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Overview</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TabsTrigger value="downloads" aria-label="Downloads" className="gap-1.5">
-                <Download className="h-3.5 w-3.5 sm:hidden" />
-                <span className="hidden sm:inline">Downloads</span>
-                {gameDownloads.length > 0 && (
-                  <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">
-                    {gameDownloads.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Downloads</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TabsTrigger value="media" aria-label="Media" className="gap-1.5">
-                <Image className="h-3.5 w-3.5 sm:hidden" />
-                <span className="hidden sm:inline">Media</span>
-                {game.screenshots && game.screenshots.length > 0 && (
-                  <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">
-                    {game.screenshots.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Media</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TabsTrigger value="content" aria-label="Game content" className="gap-1.5">
-                <Package className="h-3.5 w-3.5 sm:hidden" />
-                <span className="hidden sm:inline">Content</span>
-              </TabsTrigger>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Content</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TabsTrigger value="links" aria-label="Links & Ratings" className="gap-1.5">
-                <Link className="h-3.5 w-3.5 sm:hidden" />
-                <span className="hidden sm:inline">Links &amp; Ratings</span>
-              </TabsTrigger>
-            </TooltipTrigger>
-            <TooltipContent className="sm:hidden">Links &amp; Ratings</TooltipContent>
-          </Tooltip>
-          {nexusDomain && (
+          <TabsTrigger value="overview" aria-label="Overview" className="gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
-                <TabsTrigger value="mods" aria-label="Mods" className="gap-1.5">
-                  <NexusModsIcon className="h-3.5 w-3.5 text-amber-500 sm:mr-1" />
-                  <span className="hidden sm:inline">Mods</span>
-                </TabsTrigger>
+                <span className="flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5 sm:hidden" />
+                  <span className="hidden sm:inline">Overview</span>
+                </span>
               </TooltipTrigger>
-              <TooltipContent className="sm:hidden">Mods</TooltipContent>
+              <TooltipContent className="sm:hidden">Overview</TooltipContent>
             </Tooltip>
+          </TabsTrigger>
+          <TabsTrigger value="downloads" aria-label="Downloads" className="gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <Download className="h-3.5 w-3.5 sm:hidden" />
+                  <span className="hidden sm:inline">Downloads</span>
+                  {gameDownloads.length > 0 && (
+                    <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">
+                      {gameDownloads.length}
+                    </Badge>
+                  )}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="sm:hidden">Downloads</TooltipContent>
+            </Tooltip>
+          </TabsTrigger>
+          <TabsTrigger value="media" aria-label="Media" className="gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <Image className="h-3.5 w-3.5 sm:hidden" />
+                  <span className="hidden sm:inline">Media</span>
+                  {game.screenshots && game.screenshots.length > 0 && (
+                    <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">
+                      {game.screenshots.length}
+                    </Badge>
+                  )}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="sm:hidden">Media</TooltipContent>
+            </Tooltip>
+          </TabsTrigger>
+          <TabsTrigger value="content" aria-label="Game content" className="gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <Package className="h-3.5 w-3.5 sm:hidden" />
+                  <span className="hidden sm:inline">Content</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="sm:hidden">Content</TooltipContent>
+            </Tooltip>
+          </TabsTrigger>
+          <TabsTrigger value="links" aria-label="Links & Ratings" className="gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <Link className="h-3.5 w-3.5 sm:hidden" />
+                  <span className="hidden sm:inline">Links &amp; Ratings</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="sm:hidden">Links &amp; Ratings</TooltipContent>
+            </Tooltip>
+          </TabsTrigger>
+          {nexusDomain && (
+            <TabsTrigger value="mods" aria-label="Mods" className="gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center gap-1.5">
+                    <NexusModsIcon className="h-3.5 w-3.5 text-amber-500 sm:mr-1" />
+                    <span className="hidden sm:inline">Mods</span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="sm:hidden">Mods</TooltipContent>
+              </Tooltip>
+            </TabsTrigger>
           )}
         </TabsList>
 
@@ -1668,6 +1680,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     <option value="main">Main</option>
                                     <option value="dlc">DLC</option>
                                     <option value="update">Update</option>
+                                    <option value="packs">Packs</option>
+                                    <option value="addons">Addons</option>
                                     <option value="extra">Extra</option>
                                   </select>
                                   <Button

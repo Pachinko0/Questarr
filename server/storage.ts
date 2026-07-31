@@ -2473,13 +2473,13 @@ export class DatabaseStorage implements IStorage {
 
   async addGameFile(file: InsertGameFile): Promise<GameFile> {
     const id = randomUUID();
-    const [gf] = await db.insert(gameFiles).values({ ...file, id, category: file.category as "main" | "dlc" | "update" | "extra" }).returning();
+    const [gf] = await db.insert(gameFiles).values({ ...file, id, category: file.category as "main" | "dlc" | "update" | "extra" | "packs" | "addons" }).returning();
     return gf;
   }
 
   async addGameFilesBatch(files: InsertGameFile[]): Promise<GameFile[]> {
     if (files.length === 0) return [];
-    const values = files.map((file) => ({ ...file, id: randomUUID(), category: file.category as "main" | "dlc" | "update" | "extra" }));
+    const values = files.map((file) => ({ ...file, id: randomUUID(), category: file.category as "main" | "dlc" | "update" | "extra" | "packs" | "addons" }));
     return db.insert(gameFiles).values(values).returning();
   }
 

@@ -190,6 +190,8 @@ export default function ClaimDownloadModal({
               <SelectItem value="main">Main</SelectItem>
               <SelectItem value="update">Update</SelectItem>
               <SelectItem value="dlc">DLC</SelectItem>
+              <SelectItem value="packs">Packs</SelectItem>
+              <SelectItem value="addons">Addons</SelectItem>
               <SelectItem value="extra">Extra</SelectItem>
             </SelectContent>
           </Select>

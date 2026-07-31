@@ -37,6 +37,16 @@ const CATEGORY_DEFINITIONS = [
     description: "Downloadable content and season passes",
   },
   {
+    value: "packs",
+    label: "Packs",
+    description: "Game packs and compilations",
+  },
+  {
+    value: "addons",
+    label: "Addons",
+    description: "Add-ons and supplementary content",
+  },
+  {
     value: "extra",
     label: "Extras",
     description: "Soundtracks, artbooks, and bonus content",
@@ -46,7 +56,7 @@ const CATEGORY_DEFINITIONS = [
 const DEFAULT_RULES: DownloadRules = {
   minSeeders: 0,
   sortBy: "seeders",
-  visibleCategories: ["main", "update", "dlc", "extra"],
+  visibleCategories: ["main", "update", "dlc", "extra", "packs", "addons"],
 };
 
 export default function AutoDownloadRulesSettings({
@@ -60,7 +70,7 @@ export default function AutoDownloadRulesSettings({
   const [minSeeders, setMinSeeders] = useState<number>(rules?.minSeeders ?? 0);
   const [sortBy, setSortBy] = useState<"seeders" | "date" | "size">(rules?.sortBy ?? "seeders");
   const [visibleCategories, setVisibleCategories] = useState<Set<DownloadCategory>>(
-    new Set((rules?.visibleCategories ?? ["main", "update", "dlc", "extra"]) as DownloadCategory[])
+    new Set((rules?.visibleCategories ?? ["main", "update", "dlc", "extra", "packs", "addons"]) as DownloadCategory[])
   );
 
   const saveRulesMutation = useMutation({

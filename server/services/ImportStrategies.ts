@@ -125,6 +125,8 @@ const CATEGORY_DIR_MAP: Record<DownloadCategory, string> = {
   dlc: "dlc",
   update: "update",
   extra: "extra",
+  packs: "packs",
+  addons: "addons",
 };
 
 async function categorizeSourceFiles(

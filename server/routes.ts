@@ -1522,7 +1522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // 3. Backfill — create game_files records for games without them
-      const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
+      const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra", "packs", "addons"]);
       let backfilledGames = 0;
       let backfilledFiles = 0;
 
@@ -1541,7 +1541,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const files: Array<{
           name: string;
-          category: "main" | "dlc" | "update" | "extra";
+          category: "main" | "dlc" | "update" | "extra" | "packs" | "addons";
           filePath: string;
         }> = [];
 
@@ -1568,7 +1568,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await fs.promises.stat(subFullPath);
                 files.push({
                   name: sub,
-                  category: lowerName as "dlc" | "update" | "extra",
+                  category: lowerName as "dlc" | "update" | "extra" | "packs" | "addons",
                   filePath: subFullPath,
                 });
               } catch {
@@ -1580,7 +1580,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const { category } = categorizeDownload(nameWithoutExt);
             files.push({
               name: entry,
-              category: category as "main" | "dlc" | "update" | "extra",
+              category: category as "main" | "dlc" | "update" | "extra" | "packs" | "addons",
               filePath: fullPath,
             });
           }
@@ -1850,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           "Scan disk: path resolution"
         );
 
-        const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
+        const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra", "packs", "addons"]);
         const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> = [];
 
         async function walkDir(dir: string, parentCategory: string): Promise<void> {
@@ -2047,11 +2047,13 @@ fileSize: f.fileSize,
         }
 
         // Add file-only slots for files not linked to any IGDB content item
-        const fileCategories = ["dlc", "update", "extra"] as const;
+        const fileCategories = ["dlc", "update", "extra", "packs", "addons"] as const;
         const categoryLabels: Record<string, string> = {
           dlc: "DLC & Expansions",
           update: "Updates & Patches",
           extra: "Extras",
+          packs: "Packs",
+          addons: "Addons",
         };
         for (const cat of fileCategories) {
           const files = gameFiles.filter((f) => f.category === cat);
@@ -2299,7 +2301,7 @@ fileSize: f.fileSize,
           return res.status(400).json({ error: "filePath is required" });
         }
 
-        if (!["main", "dlc", "update", "extra"].includes(category)) {
+        if (!["main", "dlc", "update", "extra", "packs", "addons"].includes(category)) {
           return res.status(400).json({ error: "Invalid category" });
         }
 
@@ -2427,7 +2429,7 @@ fileSize: f.fileSize,
             continue;
           }
 
-          if (!["main", "dlc", "update", "extra"].includes(category)) {
+          if (!["main", "dlc", "update", "extra", "packs", "addons"].includes(category)) {
             results.push({ filePath, success: false, error: "Invalid category" });
             continue;
           }
