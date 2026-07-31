@@ -1988,13 +1988,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (seen.has(item.id)) continue;
               seen.add(item.id);
               const existingGame = userGames.find((g) => g.igdbId === item.id);
-              const igdbCat = item.game_type ?? item.category;
               const itemCategory =
-                igdbCat === 1 || igdbCat === 2 || igdbCat === 4
-                  ? "dlc"
-                  : igdbCat === 13
-                    ? "packs"
-                    : "update";
+                item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
               const expFiles = gameFiles.filter(
                 (f) =>
                   (f.igdbContentId != null
