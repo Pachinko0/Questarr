@@ -106,6 +106,7 @@ import { importTasksRouter } from "./routes/import-tasks.js";
 import { systemRouter } from "./routes/system.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
 import { importManager, PLATFORM_FOLDER_NAMES, OLD_PLATFORM_FOLDER_NAMES, IGDB_PLATFORM_NAME_TO_KEY } from "./services/index.js";
+import { sanitizeFsName } from "./services/ImportStrategies.js";
 
 // Cache-Control header values for IGDB discovery endpoints
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
@@ -1830,6 +1831,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const gameDir = path.resolve(game.libraryPath);
 
+        // Existing games may have libraryPath set to the platform root (pre-fix bug).
+        // Try to resolve to the actual game subdirectory if one exists.
+        const cleanTitle = sanitizeFsName(game.title);
+        const expectedGameDir = path.join(gameDir, cleanTitle);
+        let resolvedDir = gameDir;
+        try {
+          if (cleanTitle && (await fs.promises.stat(expectedGameDir)).isDirectory()) {
+            resolvedDir = expectedGameDir;
+          }
+        } catch {
+          // expected subdirectory doesn't exist; use libraryPath as-is
+        }
+
         const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra"]);
         const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> = [];
 
@@ -1870,8 +1884,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        await walkDir(gameDir, "");
-        routesLogger.info({ gameId: game.id, gameDir, fileCount: files.length }, "Scan disk: recursive scan complete");
+        await walkDir(resolvedDir, "");
+        routesLogger.info({ gameId: game.id, gameDir, resolvedDir, fileCount: files.length }, "Scan disk: recursive scan complete");
         res.json({ files });
       } catch (error) {
         routesLogger.error({ error }, "error fetching game files");
