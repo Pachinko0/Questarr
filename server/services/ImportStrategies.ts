@@ -85,10 +85,16 @@ async function transferFile(
     return "hardlink";
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EXDEV") {
+    if (
+      code === "EXDEV" ||
+      code === "EPERM" ||
+      code === "EACCES" ||
+      code === "ENOTSUP" ||
+      code === "EOPNOTSUPP"
+    ) {
       logger.warn(
-        { source, destination },
-        "[ImportStrategies] Hardlink not supported across devices, falling back to copy"
+        { source, destination, code },
+        "[ImportStrategies] Hardlink not supported, falling back to copy"
       );
       await fs.copy(source, destination, { overwrite: true });
       return "copy";
@@ -154,10 +160,7 @@ async function categorizeSourceFiles(
   return result;
 }
 
-function destinationForFile(
-  gameDir: string,
-  entry: FileCategoryEntry
-): string {
+function destinationForFile(gameDir: string, entry: FileCategoryEntry): string {
   const subdir = CATEGORY_DIR_MAP[entry.category];
   return subdir ? path.join(gameDir, subdir, entry.name) : path.join(gameDir, entry.name);
 }
@@ -212,9 +215,7 @@ export class PCImportStrategy implements ImportStrategy {
       const isSrcDir = srcStats.isDirectory();
 
       for (const entry of review.fileCategories) {
-        const srcFile = isSrcDir
-          ? path.join(review.originalPath, entry.name)
-          : review.originalPath;
+        const srcFile = isSrcDir ? path.join(review.originalPath, entry.name) : review.originalPath;
         const destFile = destinationForFile(review.proposedPath, entry);
 
         await fs.ensureDir(path.dirname(destFile));
