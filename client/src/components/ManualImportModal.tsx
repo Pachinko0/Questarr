@@ -16,7 +16,7 @@ import { Loader2, Upload, Search, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { FileBrowser } from "./FileBrowser";
-import type { Game, ImportConfig } from "@shared/schema";
+import type { Game, ImportConfig, ImportTransferMode } from "@shared/schema";
 
 interface ScannedFile {
   name: string;
@@ -46,13 +46,19 @@ interface ImportResult {
   error?: string;
 }
 
-export default function ManualImportModal({ open, onOpenChange, game, defaultCategory }: ManualImportModalProps) {
+export default function ManualImportModal({
+  open,
+  onOpenChange,
+  game,
+  defaultCategory,
+}: ManualImportModalProps) {
   const { toast } = useToast();
   const [step, setStep] = useState<"scan" | "assign">("scan");
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [scanPath, setScanPath] = useState("");
   const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
   const [assignments, setAssignments] = useState<ImportAssignment[]>([]);
+  const [transferMode, setTransferMode] = useState<ImportTransferMode | "">("");
   const hasSelectedFiles = useRef(false);
 
   const isSingleFile = !!game;
@@ -162,12 +168,17 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
             category: a.category,
           };
           if (a.platformDir) body.platformDir = a.platformDir;
+          if (transferMode) body.transferMode = transferMode;
           const res = await apiRequest("POST", `/api/games/${a.gameId}/manual-import`, body);
           const data = await res.json();
           if (data.success) {
             results.push({ filePath: a.file.path, success: true });
           } else {
-            results.push({ filePath: a.file.path, success: false, error: data.error || "Import failed" });
+            results.push({
+              filePath: a.file.path,
+              success: false,
+              error: data.error || "Import failed",
+            });
           }
         } catch (err) {
           results.push({ filePath: a.file.path, success: false, error: (err as Error).message });
@@ -179,13 +190,17 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
       queryClient.invalidateQueries({ queryKey: ["/api/games"] });
       const successCount = results.filter((r) => r.success).length;
       if (importToastRef.current) {
-        importToastRef.current.update({ description: `Imported ${successCount} of ${results.length} files` });
+        importToastRef.current.update({
+          description: `Imported ${successCount} of ${results.length} files`,
+        });
         importToastRef.current = null;
       }
     },
     onMutate: () => {
       const count = assignments.filter((a) => a.gameId).length;
-      importToastRef.current = toast({ description: `Importing ${count} file${count !== 1 ? "s" : ""}...` });
+      importToastRef.current = toast({
+        description: `Importing ${count} file${count !== 1 ? "s" : ""}...`,
+      });
       onOpenChange(false);
     },
     onError: (err: Error) => {
@@ -206,9 +221,7 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
   };
 
   const handleGameSearch = (query: string, index: number) => {
-    const matching = userGames.find(
-      (g) => g.title.toLowerCase().includes(query.toLowerCase())
-    );
+    const matching = userGames.find((g) => g.title.toLowerCase().includes(query.toLowerCase()));
     if (matching) {
       updateAssignment(index, { gameId: matching.id, gameTitle: matching.title });
     }
@@ -219,16 +232,26 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
     setScanPath("");
     setScannedFiles([]);
     setAssignments([]);
+    setTransferMode("");
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
       <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Manual Import</DialogTitle>
           <DialogDescription>
             {step === "scan" && "Scanning folder..."}
-            {step === "assign" && (isSingleFile ? "Confirm import details" : `Assign ${scannedFiles.length} file(s) to games`)}
+            {step === "assign" &&
+              (isSingleFile
+                ? "Confirm import details"
+                : `Assign ${scannedFiles.length} file(s) to games`)}
           </DialogDescription>
         </DialogHeader>
 
@@ -246,6 +269,23 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
 
         {step === "assign" && (
           <>
+            <div className="flex items-center gap-3 pb-2">
+              <Label className="text-xs text-muted-foreground whitespace-nowrap">
+                Transfer mode
+              </Label>
+              <select
+                value={transferMode}
+                onChange={(e) => setTransferMode(e.target.value as ImportTransferMode)}
+                className="h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="">Select mode...</option>
+                <option value="move">Move</option>
+                <option value="copy">Copy</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Move cuts the file from its current location; Copy leaves the original in place.
+              </p>
+            </div>
             <ScrollArea className="flex-1 border rounded-md">
               <div className="divide-y">
                 {assignments.map((a, i) => (
@@ -283,7 +323,9 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
                           >
                             <option value="">Auto-detect</option>
                             {platformFolders.map((pf) => (
-                              <option key={pf} value={pf}>{pf}</option>
+                              <option key={pf} value={pf}>
+                                {pf}
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -317,7 +359,9 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
                         >
                           <option value="">Auto-detect</option>
                           {platformFolders.map((pf) => (
-                            <option key={pf} value={pf}>{pf}</option>
+                            <option key={pf} value={pf}>
+                              {pf}
+                            </option>
                           ))}
                         </select>
                       </>
@@ -327,14 +371,20 @@ export default function ManualImportModal({ open, onOpenChange, game, defaultCat
               </div>
             </ScrollArea>
             <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={reset}>Back</Button>
+              <Button variant="outline" onClick={reset}>
+                Back
+              </Button>
               <Button
                 onClick={() => executeMutation.mutate()}
-                disabled={!assignments.some((a) => a.gameId) || executeMutation.isPending}
+                disabled={
+                  !transferMode || !assignments.some((a) => a.gameId) || executeMutation.isPending
+                }
                 className="gap-2"
               >
                 <Upload className="w-4 h-4" />
-                {isSingleFile ? "Import" : `Import ${assignments.filter((a) => a.gameId).length} file(s)`}
+                {isSingleFile
+                  ? "Import"
+                  : `Import ${assignments.filter((a) => a.gameId).length} file(s)`}
               </Button>
             </div>
           </>

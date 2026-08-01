@@ -21,6 +21,7 @@ import {
   insertReleaseBlacklistSchema,
   insertGameFileSchema,
   claimDownloadRequestSchema,
+  importTransferModeSchema,
   type InsertGameFile,
   type Config,
   type Game,
@@ -2345,6 +2346,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { gameId } = req.params;
         const userId = req.user!.id;
         const { filePath, category, platformDir, targetDir } = req.body;
+        const transferMode = importTransferModeSchema.safeParse(req.body.transferMode);
+        if (!transferMode.success) {
+          return res.status(400).json({ error: "Invalid transferMode" });
+        }
 
         routesLogger.debug({ filePath, category, gameId }, "Manual import request received");
         if (!filePath || typeof filePath !== "string") {
@@ -2393,7 +2398,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           game,
           category,
           platformDir,
-          targetDir
+          targetDir,
+          transferMode.data
         );
 
         const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;

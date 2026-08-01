@@ -1,4 +1,5 @@
 import { type IStorage } from "../storage.js";
+import { type ImportTransferMode } from "@shared/schema";
 import type { InsertGameFile } from "@shared/schema";
 import { PathMappingService } from "./PathMappingService.js";
 import { PlatformMappingService } from "./PlatformMappingService.js";
@@ -877,7 +878,8 @@ export class ImportManager {
     game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
     category: "main" | "dlc" | "update" | "extra" | "packs",
     platformDir?: string,
-    targetDir?: string
+    targetDir?: string,
+    transferMode?: ImportTransferMode
   ): Promise<{ destDir: string; newPath: string; fileSize: number }> {
     const config = await this.storage.getImportConfig(game.userId ?? undefined);
     const libraryRoot = config.libraryRoot || "/data";
@@ -888,11 +890,11 @@ export class ImportManager {
 
     // Scan-disk import: we already know the file's real location and the game's
     // real folder, so place it directly into <gameFolder>/<category>. No
-    // platform/title resolution needed.
+    // platform/title resolution needed. Always moves the file into place.
     if (targetDir) {
       const destDir = path.resolve(targetDir, category === "main" ? "" : category);
       await fs.ensureDir(destDir);
-      await transferFile(filePath, path.join(destDir, fileName), config.transferMode);
+      await transferFile(filePath, path.join(destDir, fileName), "move");
       return { destDir, newPath: path.join(destDir, fileName), fileSize: stats.size };
     }
 
@@ -912,7 +914,7 @@ export class ImportManager {
       throw new Error(`Import requires review: ${plan.reviewReason}`);
     }
 
-    const result = await strategy.executeImport(plan, config.transferMode);
+    const result = await strategy.executeImport(plan, transferMode ?? config.transferMode);
 
     const ext = path.extname(result.destDir);
     const destDir = ext ? path.dirname(result.destDir) : result.destDir;
