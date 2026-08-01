@@ -729,6 +729,23 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [scanningDisk, setScanningDisk] = useState(false);
   const [manualImportOpen, setManualImportOpen] = useState(false);
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
+
+  const scanImportMutation = useMutation({
+    mutationFn: async ({ filePath, category }: { filePath: string; category: string }) => {
+      const res = await apiRequest("POST", `/api/games/${game!.id}/manual-import`, {
+        filePath,
+        category,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/games/${game!.id}/content`] });
+      toast({ description: "File imported" });
+    },
+    onError: (err: Error) => {
+      toast({ description: err.message, variant: "destructive" });
+    },
+  });
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
   const [deleteConfirmFileId, setDeleteConfirmFileId] = useState<string | null>(null);
@@ -1687,10 +1704,17 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
+                                    disabled={scanImportMutation.isPending}
                                     onClick={() => {
-                                      setImportTargetCategory(file.category);
-                                      setScanResults((prev) =>
-                                        prev.filter((f) => f.path !== file.path)
+                                      scanImportMutation.mutate(
+                                        { filePath: file.path, category: file.category },
+                                        {
+                                          onSuccess: () => {
+                                            setScanResults((prev) =>
+                                              prev.filter((f) => f.path !== file.path)
+                                            );
+                                          },
+                                        }
                                       );
                                     }}
                                   >
