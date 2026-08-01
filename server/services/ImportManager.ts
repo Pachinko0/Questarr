@@ -8,6 +8,7 @@ import {
   ImportReview,
   PCImportStrategy,
   sanitizeFsName,
+  transferFile,
   type FileCategoryEntry,
 } from "./ImportStrategies.js";
 import { DownloaderManager } from "../downloaders.js";
@@ -884,6 +885,16 @@ export class ImportManager {
 
     const stats = await fs.stat(filePath);
     const fileName = path.basename(filePath);
+
+    // Scan-disk import: we already know the file's real location and the game's
+    // real folder, so place it directly into <gameFolder>/<category>. No
+    // platform/title resolution needed.
+    if (targetDir) {
+      const destDir = path.resolve(targetDir, category === "main" ? "" : category);
+      await fs.ensureDir(destDir);
+      await transferFile(filePath, path.join(destDir, fileName), config.transferMode);
+      return { destDir, newPath: path.join(destDir, fileName), fileSize: stats.size };
+    }
 
     const strategy = new PCImportStrategy();
     const resolvedPlatform =

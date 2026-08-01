@@ -54,11 +54,15 @@ async function ensureParentDir(filePath: string): Promise<void> {
   await fs.ensureDir(path.dirname(filePath));
 }
 
-async function transferFile(
+export async function transferFile(
   source: string,
   destination: string,
   mode: "move" | "copy" | "hardlink" | "symlink"
 ): Promise<"move" | "copy" | "hardlink" | "symlink"> {
+  if (path.resolve(source) === path.resolve(destination)) {
+    return mode;
+  }
+
   await ensureParentDir(destination);
 
   if (mode === "move") {

@@ -2388,7 +2388,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // No download match, proceed without linking
         }
 
-        const result = await importManager.manualImportFile(filePath, game, category, platformDir);
+        const result = await importManager.manualImportFile(
+          filePath,
+          game,
+          category,
+          platformDir,
+          targetDir
+        );
 
         const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
         const storedName = originalName;
