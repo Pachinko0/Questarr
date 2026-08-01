@@ -262,12 +262,68 @@ export class QBittorrentClient implements DownloaderClient {
                   ? "qBittorrent accepted URL for async processing"
                   : "qBittorrent added torrent immediately via URL"
               );
-              return {
-                success: true,
-                message: isPending
-                  ? "Download queued in qBittorrent"
-                  : "Download added successfully",
-              };
+
+              // qBittorrent v5+ 202 response has no hash in `added_torrent_ids` yet
+              // (pending async processing). Wait for the torrent to materialize and
+              // return its hash so the caller can track the download.
+              const hashFromUrl = extractHashFromUrl(request.url);
+              if (hashFromUrl) {
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                const verifyResponse = await this.makeRequest(
+                  "GET",
+                  `/api/v2/torrents/info?hashes=${hashFromUrl}`
+                );
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const downloads = (await verifyResponse.json()) as any[];
+                if (downloads && downloads.length > 0) {
+                  return {
+                    success: true,
+                    id: hashFromUrl,
+                    message: isPending
+                      ? "Download queued in qBittorrent"
+                      : "Download added successfully",
+                  };
+                }
+              }
+
+              const recent = await findRecentlyAddedDownload();
+              if (recent) {
+                return {
+                  success: true,
+                  id: recent.hash,
+                  message: isPending
+                    ? "Download queued in qBittorrent"
+                    : "Download added successfully",
+                };
+              }
+
+              if (isSuccess) {
+                // success_count >= 1 means the torrent was added immediately, but we
+                // couldn't resolve its hash. Still report success; tracking will rely
+                // on name-based matching.
+                return {
+                  success: true,
+                  message: "Download added successfully",
+                };
+              }
+
+              // Pending but never materialized. If it's a magnet there's no file to
+              // upload, so report the failure. For a URL-based torrent, fall through
+              // to the file-upload fallback: qBittorrent may not be able to reach the
+              // indexer URL (e.g. DNS/network isolation), but we can fetch the
+              // .torrent ourselves and upload it.
+              if (isMagnet) {
+                return {
+                  success: false,
+                  message:
+                    "Magnet link was accepted by qBittorrent but the torrent was not found afterwards",
+                };
+              }
+
+              downloadersLogger.warn(
+                { url: request.url, parsed },
+                "qBittorrent accepted URL but the torrent never materialized; falling back to torrent-file upload"
+              );
             }
             // failure_count >= 1 with no pending/success → fall through to file-upload fallback
           }
