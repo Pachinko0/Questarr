@@ -768,6 +768,47 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       toast({ description: err.message, variant: "destructive" });
     },
   });
+
+  const scanImportAllMutation = useMutation({
+    mutationFn: async (files: Array<{ path: string; category: string; platformDir: string }>) => {
+      const results: Array<{ path: string; success: boolean; error?: string }> = [];
+      for (const file of files) {
+        try {
+          const body: Record<string, string> = { filePath: file.path, category: file.category };
+          if (file.platformDir) body.platformDir = file.platformDir;
+          if (scanTargetDir) body.targetDir = scanTargetDir;
+          const res = await apiRequest("POST", `/api/games/${game!.id}/manual-import`, body);
+          const data = await res.json();
+          results.push({ path: file.path, success: !!data.success });
+        } catch (err) {
+          results.push({
+            path: file.path,
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/games/${game!.id}/content`] });
+      const okCount = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success);
+      if (failed.length === 0) {
+        toast({ description: `Imported ${okCount} file${okCount !== 1 ? "s" : ""}` });
+        setScanResults([]);
+      } else {
+        toast({
+          description: `${okCount} imported, ${failed.length} failed`,
+          variant: "destructive",
+        });
+        setScanResults((prev) => prev.filter((f) => !failed.some((r) => r.path === f.path)));
+      }
+    },
+    onError: (err: Error) => {
+      toast({ description: err.message, variant: "destructive" });
+    },
+  });
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
   const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>(
     {}
@@ -1716,88 +1757,106 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                               All files on disk are already tracked.
                             </p>
                           ) : (
-                            untracked.map((file, i) => (
-                              <div
-                                key={`${file.path}-${i}`}
-                                className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <p className="truncate">{file.name}</p>
-                                  <p className="text-xs text-muted-foreground truncate">
-                                    {file.path}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <select
-                                    className="h-7 rounded border border-input bg-background px-2 text-xs"
-                                    value={file.category}
-                                    onChange={(e) =>
-                                      setScanResults((prev) =>
-                                        prev.map((f) =>
-                                          f.path === file.path
-                                            ? { ...f, category: e.target.value }
-                                            : f
-                                        )
-                                      )
-                                    }
-                                    aria-label="Category"
-                                  >
-                                    <option value="main">Main</option>
-                                    <option value="dlc">DLC</option>
-                                    <option value="update">Update</option>
-                                    <option value="packs">Packs/Addons</option>
-                                    <option value="extra">Extra</option>
-                                  </select>
-                                  {scanPlatformFolders.length > 1 && (
+                            <>
+                              <div className="flex justify-end">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 gap-1.5 text-xs"
+                                  disabled={scanImportAllMutation.isPending}
+                                  onClick={() => {
+                                    scanImportAllMutation.mutate(untracked);
+                                  }}
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                  {scanImportAllMutation.isPending
+                                    ? "Importing…"
+                                    : `Import All (${untracked.length})`}
+                                </Button>
+                              </div>
+                              {untracked.map((file, i) => (
+                                <div
+                                  key={`${file.path}-${i}`}
+                                  className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <p className="truncate">{file.name}</p>
+                                    <p className="text-xs text-muted-foreground truncate">
+                                      {file.path}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
                                     <select
                                       className="h-7 rounded border border-input bg-background px-2 text-xs"
-                                      value={file.platformDir}
+                                      value={file.category}
                                       onChange={(e) =>
                                         setScanResults((prev) =>
                                           prev.map((f) =>
                                             f.path === file.path
-                                              ? { ...f, platformDir: e.target.value }
+                                              ? { ...f, category: e.target.value }
                                               : f
                                           )
                                         )
                                       }
-                                      aria-label="Platform"
+                                      aria-label="Category"
                                     >
-                                      <option value="">Auto</option>
-                                      {scanPlatformFolders.map((pf) => (
-                                        <option key={pf} value={pf}>
-                                          {pf}
-                                        </option>
-                                      ))}
+                                      <option value="main">Main</option>
+                                      <option value="dlc">DLC</option>
+                                      <option value="update">Update</option>
+                                      <option value="packs">Packs/Addons</option>
+                                      <option value="extra">Extra</option>
                                     </select>
-                                  )}
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
-                                    disabled={scanImportMutation.isPending}
-                                    onClick={() => {
-                                      scanImportMutation.mutate(
-                                        {
-                                          filePath: file.path,
-                                          category: file.category,
-                                          platformDir: file.platformDir,
-                                        },
-                                        {
-                                          onSuccess: () => {
-                                            setScanResults((prev) =>
-                                              prev.filter((f) => f.path !== file.path)
-                                            );
-                                          },
+                                    {scanPlatformFolders.length > 1 && (
+                                      <select
+                                        className="h-7 rounded border border-input bg-background px-2 text-xs"
+                                        value={file.platformDir}
+                                        onChange={(e) =>
+                                          setScanResults((prev) =>
+                                            prev.map((f) =>
+                                              f.path === file.path
+                                                ? { ...f, platformDir: e.target.value }
+                                                : f
+                                            )
+                                          )
                                         }
-                                      );
-                                    }}
-                                  >
-                                    <Upload className="h-3.5 w-3.5" />
-                                  </Button>
+                                        aria-label="Platform"
+                                      >
+                                        <option value="">Auto</option>
+                                        {scanPlatformFolders.map((pf) => (
+                                          <option key={pf} value={pf}>
+                                            {pf}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-accent shrink-0"
+                                      disabled={scanImportMutation.isPending}
+                                      onClick={() => {
+                                        scanImportMutation.mutate(
+                                          {
+                                            filePath: file.path,
+                                            category: file.category,
+                                            platformDir: file.platformDir,
+                                          },
+                                          {
+                                            onSuccess: () => {
+                                              setScanResults((prev) =>
+                                                prev.filter((f) => f.path !== file.path)
+                                              );
+                                            },
+                                          }
+                                        );
+                                      }}
+                                    >
+                                      <Upload className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
                                 </div>
-                              </div>
-                            ))
+                              ))}
+                            </>
                           );
                         })()}
                       </CardContent>
