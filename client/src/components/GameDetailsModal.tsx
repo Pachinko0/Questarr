@@ -265,7 +265,10 @@ function getDerivedLinks(
   pcgwUrl?: string | null
 ): Array<SiteLinkConfig & { href: string }> {
   const t = encodeURIComponent(game.title);
-  const igdbSlug = game.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const igdbSlug = game.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 
   return [
     {
@@ -351,7 +354,6 @@ function SourceBadge({ source }: { source: string | null | undefined }) {
   }
   return (
     <Badge variant="outline" className="gap-1.5 text-muted-foreground inline-flex items-center">
-
       <UserRound className="w-3 h-3" />
       <span className="hidden sm:inline">Added Manually</span>
     </Badge>
@@ -724,18 +726,38 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   });
 
   const [scanResults, setScanResults] = useState<
-    Array<{ name: string; path: string; category: string; isDirectory: boolean }>
+    Array<{
+      name: string;
+      path: string;
+      category: string;
+      isDirectory: boolean;
+      platformDir: string;
+    }>
   >([]);
+  const [scanTargetDir, setScanTargetDir] = useState<string>("");
   const [scanningDisk, setScanningDisk] = useState(false);
   const [manualImportOpen, setManualImportOpen] = useState(false);
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
 
+  const { data: scanPlatformFolders = [] } = useQuery<string[]>({
+    queryKey: game ? [`/api/platform-folders?gameId=${game.id}`] : ["/api/platform-folders"],
+    enabled: open && !!game?.id,
+  });
+
   const scanImportMutation = useMutation({
-    mutationFn: async ({ filePath, category }: { filePath: string; category: string }) => {
-      const res = await apiRequest("POST", `/api/games/${game!.id}/manual-import`, {
-        filePath,
-        category,
-      });
+    mutationFn: async ({
+      filePath,
+      category,
+      platformDir,
+    }: {
+      filePath: string;
+      category: string;
+      platformDir: string;
+    }) => {
+      const body: Record<string, string> = { filePath, category };
+      if (platformDir) body.platformDir = platformDir;
+      if (scanTargetDir) body.targetDir = scanTargetDir;
+      const res = await apiRequest("POST", `/api/games/${game!.id}/manual-import`, body);
       return res.json();
     },
     onSuccess: () => {
@@ -747,7 +769,9 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     },
   });
   const [expandedDownloads, setExpandedDownloads] = useState<Set<string>>(new Set());
-  const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>({});
+  const [downloadFilesCache, setDownloadFilesCache] = useState<Record<string, ContentSlotFile[]>>(
+    {}
+  );
   const [deleteConfirmFileId, setDeleteConfirmFileId] = useState<string | null>(null);
   const [titleSingleLine, setTitleSingleLine] = useState(true);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -759,7 +783,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
     }
   }, [game?.title]);
 
-  const { data: contentData, isLoading: contentLoading, refetch: refetchContent } = useQuery<{
+  const {
+    data: contentData,
+    isLoading: contentLoading,
+    refetch: refetchContent,
+  } = useQuery<{
     slots: ContentSlot[];
     videos?: Array<{ videoId: string; name: string }>;
   }>({
@@ -864,19 +892,27 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => hiddenMutation.mutate({ gameId: game.id, hidden: !game.hidden })}
+                      onClick={() =>
+                        hiddenMutation.mutate({ gameId: game.id, hidden: !game.hidden })
+                      }
                       disabled={hiddenMutation.isPending}
                       className="h-9 w-9 sm:h-8 sm:w-auto sm:px-2 sm:gap-1.5"
                       aria-label={game.hidden ? "Unhide" : "Hide"}
                       data-testid={`button-toggle-hidden-quick-${game.id}`}
                     >
-                      {game.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      {game.hidden ? (
+                        <Eye className="w-3.5 h-3.5" />
+                      ) : (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      )}
                       <span className="hidden sm:inline text-xs">
                         {hiddenMutation.isPending ? "Updating..." : game.hidden ? "Unhide" : "Hide"}
                       </span>
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent className="sm:hidden">{game.hidden ? "Unhide" : "Hide"}</TooltipContent>
+                  <TooltipContent className="sm:hidden">
+                    {game.hidden ? "Unhide" : "Hide"}
+                  </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -955,7 +991,9 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                         <span className="hidden sm:inline">Results available</span>
                       </Badge>
                     </TooltipTrigger>
-                    <TooltipContent className="sm:hidden">Downloads found on indexers</TooltipContent>
+                    <TooltipContent className="sm:hidden">
+                      Downloads found on indexers
+                    </TooltipContent>
                   </Tooltip>
                   {titleSingleLine && <div className="w-full" />}
                 </>
@@ -1422,42 +1460,52 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                           <div className="flex items-center gap-3 min-w-0">
                             {slot.coverUrl && (
                               <img
-                                src={slot.coverUrl
-                                  .replace("t_thumb", "t_cover_small")
-                                  .startsWith("//")
-                                  ? `https:${slot.coverUrl.replace("t_thumb", "t_cover_small")}`
-                                  : slot.coverUrl.replace("t_thumb", "t_cover_small")}
+                                src={
+                                  slot.coverUrl.replace("t_thumb", "t_cover_small").startsWith("//")
+                                    ? `https:${slot.coverUrl.replace("t_thumb", "t_cover_small")}`
+                                    : slot.coverUrl.replace("t_thumb", "t_cover_small")
+                                }
                                 alt={slot.label}
                                 className="h-10 w-8 rounded object-cover shrink-0"
                               />
                             )}
                             <h4 className="text-sm font-semibold truncate">{slot.label}</h4>
-                            {slot.igdbCategory != null && IGDB_CATEGORY_LABELS[slot.igdbCategory] && (
-                              <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 shrink-0", IGDB_CATEGORY_COLORS[slot.igdbCategory])}>
-                                {IGDB_CATEGORY_LABELS[slot.igdbCategory]}
-                              </Badge>
-                            )}
+                            {slot.igdbCategory != null &&
+                              IGDB_CATEGORY_LABELS[slot.igdbCategory] && (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    "text-[10px] px-1.5 py-0 shrink-0",
+                                    IGDB_CATEGORY_COLORS[slot.igdbCategory]
+                                  )}
+                                >
+                                  {IGDB_CATEGORY_LABELS[slot.igdbCategory]}
+                                </Badge>
+                              )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {slot.igdbId != null && slot.gameId != null && slot.files.length > 0 && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                    onClick={async () => {
-                                      if (!confirm("Remove this expansion from your collection?")) return;
-                                      await apiRequest("DELETE", `/api/games/${slot.gameId}`);
-                                      refetchContent();
-                                    }}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Remove from collection</TooltipContent>
-                              </Tooltip>
-                            )}
+                            {slot.igdbId != null &&
+                              slot.gameId != null &&
+                              slot.files.length > 0 && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                      onClick={async () => {
+                                        if (!confirm("Remove this expansion from your collection?"))
+                                          return;
+                                        await apiRequest("DELETE", `/api/games/${slot.gameId}`);
+                                        refetchContent();
+                                      }}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Remove from collection</TooltipContent>
+                                </Tooltip>
+                              )}
                             {slot.files.length > 0 ? (
                               <Badge variant="secondary" className="text-xs shrink-0">
                                 {slot.files.length} file{slot.files.length !== 1 ? "s" : ""}
@@ -1473,7 +1521,9 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                           </div>
                         </div>
                         {slot.summary && <ContentSummary summary={slot.summary} />}
-                        {(slot.releaseDate != null || slot.rating != null || slot.aggregatedRating != null) && (
+                        {(slot.releaseDate != null ||
+                          slot.rating != null ||
+                          slot.aggregatedRating != null) && (
                           <div className="flex items-center gap-4 mb-2 text-xs text-muted-foreground">
                             {slot.releaseDate != null && (
                               <span className="flex items-center gap-1">
@@ -1509,9 +1559,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                       <span>{formatBytes(file.fileSize)}</span>
                                     )}
                                     {file.createdAt && (
-                                      <span>
-                                        {new Date(file.createdAt).toLocaleDateString()}
-                                      </span>
+                                      <span>{new Date(file.createdAt).toLocaleDateString()}</span>
                                     )}
                                   </div>
                                 </div>
@@ -1564,7 +1612,9 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                   Search
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>Search for this game to add to your collection</TooltipContent>
+                              <TooltipContent>
+                                Search for this game to add to your collection
+                              </TooltipContent>
                             </Tooltip>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -1600,10 +1650,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                         setScanningDisk(true);
                         setScanResults([]);
                         try {
-                          const res = await apiRequest(
-                            "GET",
-                            `/api/games/${game.id}/files`
-                          );
+                          const res = await apiRequest("GET", `/api/games/${game.id}/files`);
                           const data = await res.json();
                           const scanned = (data.files ?? []) as Array<{
                             name: string;
@@ -1611,7 +1658,8 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             category: string;
                             isDirectory: boolean;
                           }>;
-                          setScanResults(scanned);
+                          setScanTargetDir(data.resolvedDir ?? "");
+                          setScanResults(scanned.map((f) => ({ ...f, platformDir: "" })));
                           toast({
                             description:
                               scanned.length === 0
@@ -1700,6 +1748,29 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     <option value="packs">Packs/Addons</option>
                                     <option value="extra">Extra</option>
                                   </select>
+                                  {scanPlatformFolders.length > 1 && (
+                                    <select
+                                      className="h-7 rounded border border-input bg-background px-2 text-xs"
+                                      value={file.platformDir}
+                                      onChange={(e) =>
+                                        setScanResults((prev) =>
+                                          prev.map((f) =>
+                                            f.path === file.path
+                                              ? { ...f, platformDir: e.target.value }
+                                              : f
+                                          )
+                                        )
+                                      }
+                                      aria-label="Platform"
+                                    >
+                                      <option value="">Auto</option>
+                                      {scanPlatformFolders.map((pf) => (
+                                        <option key={pf} value={pf}>
+                                          {pf}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -1707,7 +1778,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                     disabled={scanImportMutation.isPending}
                                     onClick={() => {
                                       scanImportMutation.mutate(
-                                        { filePath: file.path, category: file.category },
+                                        {
+                                          filePath: file.path,
+                                          category: file.category,
+                                          platformDir: file.platformDir,
+                                        },
                                         {
                                           onSuccess: () => {
                                             setScanResults((prev) =>
@@ -2098,7 +2173,18 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
 
       {downloadOpen && (
         <Suspense fallback={null}>
-          <GameDownloadDialog game={downloadSearchGame ?? game} open={downloadOpen} onOpenChange={(o) => { setDownloadOpen(o); if (!o) { setDownloadSearchGame(null); setSearchContentIgdbCategory(undefined); } }} contentIgdbCategory={searchContentIgdbCategory} />
+          <GameDownloadDialog
+            game={downloadSearchGame ?? game}
+            open={downloadOpen}
+            onOpenChange={(o) => {
+              setDownloadOpen(o);
+              if (!o) {
+                setDownloadSearchGame(null);
+                setSearchContentIgdbCategory(undefined);
+              }
+            }}
+            contentIgdbCategory={searchContentIgdbCategory}
+          />
         </Suspense>
       )}
 
@@ -2178,7 +2264,10 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={!!deleteConfirmFileId} onOpenChange={(o) => !o && setDeleteConfirmFileId(null)}>
+      <AlertDialog
+        open={!!deleteConfirmFileId}
+        onOpenChange={(o) => !o && setDeleteConfirmFileId(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this file?</AlertDialogTitle>

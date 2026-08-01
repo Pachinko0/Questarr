@@ -105,7 +105,12 @@ import { importRouter } from "./routes/import.js";
 import { importTasksRouter } from "./routes/import-tasks.js";
 import { systemRouter } from "./routes/system.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
-import { importManager, PLATFORM_FOLDER_NAMES, OLD_PLATFORM_FOLDER_NAMES, IGDB_PLATFORM_NAME_TO_KEY } from "./services/index.js";
+import {
+  importManager,
+  PLATFORM_FOLDER_NAMES,
+  OLD_PLATFORM_FOLDER_NAMES,
+  IGDB_PLATFORM_NAME_TO_KEY,
+} from "./services/index.js";
 import { sanitizeFsName } from "./services/ImportStrategies.js";
 
 // Cache-Control header values for IGDB discovery endpoints
@@ -1614,7 +1619,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (backfilledGames > 0) {
-        routesLogger.info({ backfilledGames, backfilledFiles }, "Library health check backfilled game_files");
+        routesLogger.info(
+          { backfilledGames, backfilledFiles },
+          "Library health check backfilled game_files"
+        );
       }
 
       res.json({ drifted, orphaned, libraryRoot: resolvedRoot, backfilledGames, backfilledFiles });
@@ -1813,202 +1821,224 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Recursively scan a game's library folder for files on disk
-  app.get(
-    "/api/games/:gameId/files",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const { gameId } = req.params;
-        const userId = req.user!.id;
+  app.get("/api/games/:gameId/files", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { gameId } = req.params;
+      const userId = req.user!.id;
 
-        const game = await resolveOwnedGame(gameId, userId, res);
-        if (!game) return;
+      const game = await resolveOwnedGame(gameId, userId, res);
+      if (!game) return;
 
-        if (!game.libraryPath) {
-          routesLogger.info({ gameId: game.id, title: game.title }, "Scan disk: no libraryPath set");
-          return res.json({ files: [] });
-        }
-
-        const gameDir = path.resolve(game.libraryPath);
-
-        // Existing games may have libraryPath set to the platform root (pre-fix bug).
-        // Try to resolve to the actual game subdirectory if one exists.
-        const cleanTitle = sanitizeFsName(game.title);
-        const expectedGameDir = path.join(gameDir, cleanTitle);
-        let resolvedDir = gameDir;
-        let subdirFound = false;
-        try {
-          if (cleanTitle && (await fs.promises.stat(expectedGameDir)).isDirectory()) {
-            resolvedDir = expectedGameDir;
-            subdirFound = true;
-          }
-        } catch {
-          // expected subdirectory doesn't exist; use libraryPath as-is
-        }
-        routesLogger.info(
-          { gameId: game.id, title: game.title, libraryPath: game.libraryPath, gameDir, cleanTitle, expectedGameDir, subdirFound, resolvedDir },
-          "Scan disk: path resolution"
-        );
-
-        const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra", "packs"]);
-        const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> = [];
-
-        async function walkDir(dir: string, parentCategory: string): Promise<void> {
-          let entries: string[];
-          try {
-            entries = await fs.promises.readdir(dir);
-          } catch {
-            return;
-          }
-
-          for (const entry of entries) {
-            const fullPath = path.join(dir, entry);
-            let stat: fs.Stats;
-            try {
-              stat = await fs.promises.stat(fullPath);
-            } catch {
-              continue;
-            }
-
-            const isDirectory = stat.isDirectory();
-            const lowerName = entry.toLowerCase();
-
-            if (isDirectory) {
-              if (CATEGORY_SUBDIRS.has(lowerName)) {
-                await walkDir(fullPath, lowerName);
-              } else {
-                await walkDir(fullPath, parentCategory);
-              }
-            } else {
-              files.push({
-                name: entry,
-                path: fullPath,
-                category: parentCategory || (() => { const { category } = categorizeDownload(path.parse(entry).name); return category; })(),
-                isDirectory: false,
-              });
-            }
-          }
-        }
-
-        await walkDir(resolvedDir, "");
-        routesLogger.info({ gameId: game.id, gameDir, resolvedDir, fileCount: files.length }, "Scan disk: recursive scan complete");
-        res.json({ files });
-      } catch (error) {
-        routesLogger.error({ error }, "error fetching game files");
-        res.status(500).json({ error: "Failed to fetch game files" });
+      if (!game.libraryPath) {
+        routesLogger.info({ gameId: game.id, title: game.title }, "Scan disk: no libraryPath set");
+        return res.json({ files: [] });
       }
+
+      const gameDir = path.resolve(game.libraryPath);
+
+      // Existing games may have libraryPath set to the platform root (pre-fix bug).
+      // Try to resolve to the actual game subdirectory if one exists.
+      const cleanTitle = sanitizeFsName(game.title);
+      const expectedGameDir = path.join(gameDir, cleanTitle);
+      let resolvedDir = gameDir;
+      let subdirFound = false;
+      try {
+        if (cleanTitle && (await fs.promises.stat(expectedGameDir)).isDirectory()) {
+          resolvedDir = expectedGameDir;
+          subdirFound = true;
+        }
+      } catch {
+        // expected subdirectory doesn't exist; use libraryPath as-is
+      }
+      routesLogger.info(
+        {
+          gameId: game.id,
+          title: game.title,
+          libraryPath: game.libraryPath,
+          gameDir,
+          cleanTitle,
+          expectedGameDir,
+          subdirFound,
+          resolvedDir,
+        },
+        "Scan disk: path resolution"
+      );
+
+      const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra", "packs"]);
+      const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> =
+        [];
+
+      async function walkDir(dir: string, parentCategory: string): Promise<void> {
+        let entries: string[];
+        try {
+          entries = await fs.promises.readdir(dir);
+        } catch {
+          return;
+        }
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry);
+          let stat: fs.Stats;
+          try {
+            stat = await fs.promises.stat(fullPath);
+          } catch {
+            continue;
+          }
+
+          const isDirectory = stat.isDirectory();
+          const lowerName = entry.toLowerCase();
+
+          if (isDirectory) {
+            if (CATEGORY_SUBDIRS.has(lowerName)) {
+              await walkDir(fullPath, lowerName);
+            } else {
+              await walkDir(fullPath, parentCategory);
+            }
+          } else {
+            files.push({
+              name: entry,
+              path: fullPath,
+              category:
+                parentCategory ||
+                (() => {
+                  const { category } = categorizeDownload(path.parse(entry).name);
+                  return category;
+                })(),
+              isDirectory: false,
+            });
+          }
+        }
+      }
+
+      await walkDir(resolvedDir, "");
+      routesLogger.info(
+        { gameId: game.id, gameDir, resolvedDir, fileCount: files.length },
+        "Scan disk: recursive scan complete"
+      );
+      res.json({ files, resolvedDir });
+    } catch (error) {
+      routesLogger.error({ error }, "error fetching game files");
+      res.status(500).json({ error: "Failed to fetch game files" });
     }
-  );
+  });
 
   // Get game content from IGDB and local files
-  app.get(
-    "/api/games/:gameId/content",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const { gameId } = req.params;
-        const userId = req.user!.id;
+  app.get("/api/games/:gameId/content", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { gameId } = req.params;
+      const userId = req.user!.id;
 
-        const game = await resolveOwnedGame(gameId, userId, res);
-        if (!game) return;
+      const game = await resolveOwnedGame(gameId, userId, res);
+      if (!game) return;
 
-        const gameFiles = await storage.getGameFiles(gameId);
-        const userGames = await storage.getUserGames(userId);
+      const gameFiles = await storage.getGameFiles(gameId);
+      const userGames = await storage.getUserGames(userId);
 
-        // Base game slot
-        const baseFiles = gameFiles.filter((f) => f.category === "main");
-        const slots: Array<{
-          category: string;
-          label: string;
-          present: boolean;
-          files: Array<{
-            id: string;
-            originalName: string;
-            storedName: string;
-            downloadId: string | null;
-            fileSize: number | null;
-            createdAt: number | null;
-            igdbContentId?: number | null;
-          }>;
-          igdbId?: number;
-          coverUrl?: string | null;
-          gameId?: string;
-          summary?: string | null;
-          rating?: number | null;
-          aggregatedRating?: number | null;
-          releaseDate?: number | null;
-          igdbCategory?: number | null;
-          videos?: Array<{ videoId: string; name: string }>;
-        }> = [
-          {
-            category: "main",
-            label: game.title,
-            present: baseFiles.length > 0,
-            files: baseFiles.map((f) => ({
-              id: f.id,
-              originalName: f.originalName,
-              storedName: f.storedName,
-              downloadId: f.downloadId,
-              fileSize: f.fileSize,
-              createdAt: f.createdAt != null ? Number(f.createdAt) : null,
-              igdbContentId: f.igdbContentId,
-            })),
-            igdbId: game.igdbId ?? undefined,
-            igdbCategory: 0,
-          },
-        ];
+      // Base game slot
+      const baseFiles = gameFiles.filter((f) => f.category === "main");
+      const slots: Array<{
+        category: string;
+        label: string;
+        present: boolean;
+        files: Array<{
+          id: string;
+          originalName: string;
+          storedName: string;
+          downloadId: string | null;
+          fileSize: number | null;
+          createdAt: number | null;
+          igdbContentId?: number | null;
+        }>;
+        igdbId?: number;
+        coverUrl?: string | null;
+        gameId?: string;
+        summary?: string | null;
+        rating?: number | null;
+        aggregatedRating?: number | null;
+        releaseDate?: number | null;
+        igdbCategory?: number | null;
+        videos?: Array<{ videoId: string; name: string }>;
+      }> = [
+        {
+          category: "main",
+          label: game.title,
+          present: baseFiles.length > 0,
+          files: baseFiles.map((f) => ({
+            id: f.id,
+            originalName: f.originalName,
+            storedName: f.storedName,
+            downloadId: f.downloadId,
+            fileSize: f.fileSize,
+            createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+            igdbContentId: f.igdbContentId,
+          })),
+          igdbId: game.igdbId ?? undefined,
+          igdbCategory: 0,
+        },
+      ];
 
-        // Fetch IGDB expansions/DLCs/standalone expansions + reverse parent_game lookup
-        let igdbGame: Awaited<ReturnType<typeof igdbClient.getGameById>> | null = null;
-        if (game.igdbId) {
-          try {
-            const [fetchedGame, parentGames] = await Promise.all([
-              igdbClient.getGameById(game.igdbId),
-              igdbClient.getGamesByParentId(game.igdbId),
-            ]);
-            igdbGame = fetchedGame;
-            const expansions = igdbGame?.expansions ?? [];
-            const dlcs = igdbGame?.dlcs ?? [];
-            const standalone = igdbGame?.standalone_expansions ?? [];
-            const expandedGames = (igdbGame?.expanded_games ?? []).filter(
-              (g) => g.category !== 10 && g.category !== 11
+      // Fetch IGDB expansions/DLCs/standalone expansions + reverse parent_game lookup
+      let igdbGame: Awaited<ReturnType<typeof igdbClient.getGameById>> | null = null;
+      if (game.igdbId) {
+        try {
+          const [fetchedGame, parentGames] = await Promise.all([
+            igdbClient.getGameById(game.igdbId),
+            igdbClient.getGamesByParentId(game.igdbId),
+          ]);
+          igdbGame = fetchedGame;
+          const expansions = igdbGame?.expansions ?? [];
+          const dlcs = igdbGame?.dlcs ?? [];
+          const standalone = igdbGame?.standalone_expansions ?? [];
+          const expandedGames = (igdbGame?.expanded_games ?? []).filter(
+            (g) => g.category !== 10 && g.category !== 11
+          );
+          routesLogger.info(
+            {
+              igdbId: game.igdbId,
+              expansions: expansions.length,
+              dlcs: dlcs.length,
+              standalone: standalone.length,
+              expanded: expandedGames.length,
+              parentGames: parentGames.length,
+              gameName: igdbGame?.name,
+            },
+            "IGDB content groups for game"
+          );
+          const contentGroups = [
+            ...expansions,
+            ...dlcs,
+            ...standalone,
+            ...expandedGames,
+            ...parentGames,
+          ];
+          const seen = new Set<number>();
+          const sourceCategory = new Map<number, number>();
+          for (const item of expansions) sourceCategory.set(item.id, 2);
+          for (const item of dlcs) sourceCategory.set(item.id, 1);
+          for (const item of standalone) sourceCategory.set(item.id, 4);
+          for (const item of expandedGames) sourceCategory.set(item.id, 10);
+          for (const item of contentGroups) {
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+            const existingGame = userGames.find((g) => g.igdbId === item.id);
+            const itemCategory =
+              item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
+            const expFiles = gameFiles.filter((f) =>
+              f.igdbContentId != null ? f.igdbContentId === item.id : f.category === itemCategory
             );
-            routesLogger.info(
-              { igdbId: game.igdbId, expansions: expansions.length, dlcs: dlcs.length, standalone: standalone.length, expanded: expandedGames.length, parentGames: parentGames.length, gameName: igdbGame?.name },
-              "IGDB content groups for game"
-            );
-            const contentGroups = [...expansions, ...dlcs, ...standalone, ...expandedGames, ...parentGames];
-            const seen = new Set<number>();
-            const sourceCategory = new Map<number, number>();
-            for (const item of expansions) sourceCategory.set(item.id, 2);
-            for (const item of dlcs) sourceCategory.set(item.id, 1);
-            for (const item of standalone) sourceCategory.set(item.id, 4);
-            for (const item of expandedGames) sourceCategory.set(item.id, 10);
-            for (const item of contentGroups) {
-              if (seen.has(item.id)) continue;
-              seen.add(item.id);
-              const existingGame = userGames.find((g) => g.igdbId === item.id);
-              const itemCategory =
-                item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
-              const expFiles = gameFiles.filter(
-                (f) =>
-                  (f.igdbContentId != null
-                    ? f.igdbContentId === item.id
-                    : f.category === itemCategory)
-              );
-              slots.push({
-                category: itemCategory,
-                label: item.name,
-                present: !!existingGame || expFiles.length > 0,
-                files: expFiles.map((f) => ({
-                  id: f.id,
-                  originalName: f.originalName,
-                  storedName: f.storedName,
-                  downloadId: f.downloadId,
-fileSize: f.fileSize,
-                  createdAt: f.createdAt != null ? Number(f.createdAt) : null,
-                  igdbContentId: f.igdbContentId,
-                })),
+            slots.push({
+              category: itemCategory,
+              label: item.name,
+              present: !!existingGame || expFiles.length > 0,
+              files: expFiles.map((f) => ({
+                id: f.id,
+                originalName: f.originalName,
+                storedName: f.storedName,
+                downloadId: f.downloadId,
+                fileSize: f.fileSize,
+                createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+                igdbContentId: f.igdbContentId,
+              })),
               igdbId: item.id,
               coverUrl: item.cover?.url ?? null,
               gameId: existingGame?.id,
@@ -2017,70 +2047,72 @@ fileSize: f.fileSize,
               aggregatedRating: item.aggregated_rating ?? null,
               releaseDate: item.first_release_date ?? null,
               igdbCategory: item.category ?? item.game_type ?? sourceCategory.get(item.id) ?? null,
-              });
-            }
-            if (seen.size === 0) {
-              routesLogger.info({ igdbId: game.igdbId }, "No expansions/DLCs returned from IGDB");
-            }
-
-            // Batch-fetch missing categories from IGDB for items where category was not returned
-            const missingCatIds = slots
-              .filter((s) => s.igdbId != null && s.igdbCategory == null)
-              .map((s) => s.igdbId!);
-            if (missingCatIds.length > 0) {
-              try {
-                const catGames = await igdbClient.getGamesByIds(missingCatIds);
-                for (const g of catGames) {
-                  const cat = g.category ?? g.game_type;
-                  if (cat != null) {
-                    const slot = slots.find((s) => s.igdbId === g.id);
-                    if (slot) slot.igdbCategory = cat;
-                  }
-                }
-              } catch (err) {
-                routesLogger.warn({ err, ids: missingCatIds }, "Failed to fetch missing categories");
-              }
-            }
-          } catch (err) {
-            routesLogger.warn({ error: err, igdbId: game.igdbId }, "Failed to fetch IGDB expansions");
-          }
-        }
-
-        // Add file-only slots for files not linked to any IGDB content item
-        const fileCategories = ["dlc", "update", "extra", "packs"] as const;
-        const categoryLabels: Record<string, string> = {
-          dlc: "DLC & Expansions",
-          update: "Updates & Patches",
-          extra: "Extras",
-          packs: "Packs/Addons",
-        };
-        for (const cat of fileCategories) {
-          const files = gameFiles.filter((f) => f.category === cat);
-          if (files.length > 0) {
-            slots.push({
-              category: cat,
-              label: categoryLabels[cat],
-              present: true,
-              files: files.map((f) => ({
-                id: f.id,
-                originalName: f.originalName,
-                storedName: f.storedName,
-                downloadId: f.downloadId,
-                fileSize: f.fileSize,
-                createdAt: f.createdAt != null ? Number(f.createdAt) : null,
-                  igdbContentId: f.igdbContentId,
-                })),
             });
           }
-        }
+          if (seen.size === 0) {
+            routesLogger.info({ igdbId: game.igdbId }, "No expansions/DLCs returned from IGDB");
+          }
 
-        res.json({ slots, videos: igdbGame?.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [] });
-      } catch (error) {
-        routesLogger.error({ error }, "error fetching game content");
-        res.status(500).json({ error: "Failed to fetch game content" });
+          // Batch-fetch missing categories from IGDB for items where category was not returned
+          const missingCatIds = slots
+            .filter((s) => s.igdbId != null && s.igdbCategory == null)
+            .map((s) => s.igdbId!);
+          if (missingCatIds.length > 0) {
+            try {
+              const catGames = await igdbClient.getGamesByIds(missingCatIds);
+              for (const g of catGames) {
+                const cat = g.category ?? g.game_type;
+                if (cat != null) {
+                  const slot = slots.find((s) => s.igdbId === g.id);
+                  if (slot) slot.igdbCategory = cat;
+                }
+              }
+            } catch (err) {
+              routesLogger.warn({ err, ids: missingCatIds }, "Failed to fetch missing categories");
+            }
+          }
+        } catch (err) {
+          routesLogger.warn({ error: err, igdbId: game.igdbId }, "Failed to fetch IGDB expansions");
+        }
       }
+
+      // Add file-only slots for files not linked to any IGDB content item
+      const fileCategories = ["dlc", "update", "extra", "packs"] as const;
+      const categoryLabels: Record<string, string> = {
+        dlc: "DLC & Expansions",
+        update: "Updates & Patches",
+        extra: "Extras",
+        packs: "Packs/Addons",
+      };
+      for (const cat of fileCategories) {
+        const files = gameFiles.filter((f) => f.category === cat);
+        if (files.length > 0) {
+          slots.push({
+            category: cat,
+            label: categoryLabels[cat],
+            present: true,
+            files: files.map((f) => ({
+              id: f.id,
+              originalName: f.originalName,
+              storedName: f.storedName,
+              downloadId: f.downloadId,
+              fileSize: f.fileSize,
+              createdAt: f.createdAt != null ? Number(f.createdAt) : null,
+              igdbContentId: f.igdbContentId,
+            })),
+          });
+        }
+      }
+
+      res.json({
+        slots,
+        videos: igdbGame?.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [],
+      });
+    } catch (error) {
+      routesLogger.error({ error }, "error fetching game content");
+      res.status(500).json({ error: "Failed to fetch game content" });
     }
-  );
+  });
 
   // Get game files by download
   app.get(
@@ -2099,109 +2131,95 @@ fileSize: f.fileSize,
   );
 
   // Create a game file record
-  app.post(
-    "/api/game-files",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const parsed = insertGameFileSchema.parse(req.body);
-        const gameFile = await storage.addGameFile(parsed);
-        res.status(201).json(gameFile);
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          return respondWithZodError(res, error, "Invalid game file data");
-        }
-        routesLogger.error({ error }, "error creating game file");
-        res.status(500).json({ error: "Failed to create game file" });
+  app.post("/api/game-files", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const parsed = insertGameFileSchema.parse(req.body);
+      const gameFile = await storage.addGameFile(parsed);
+      res.status(201).json(gameFile);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return respondWithZodError(res, error, "Invalid game file data");
       }
+      routesLogger.error({ error }, "error creating game file");
+      res.status(500).json({ error: "Failed to create game file" });
     }
-  );
+  });
 
   // Return available platform folder names for manual import
-  app.get(
-    "/api/platform-folders",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      const gameId = req.query.gameId as string | undefined;
-      if (gameId) {
-        const game = await storage.getGame(gameId);
-        if (game && Array.isArray(game.platforms)) {
-          const matched = new Set<string>();
-          for (const p of game.platforms) {
-            const name = typeof p === "string" ? p.toLowerCase().trim() : "";
-            const folderKey = IGDB_PLATFORM_NAME_TO_KEY[name];
-            if (folderKey && PLATFORM_FOLDER_NAMES[folderKey]) {
-              matched.add(PLATFORM_FOLDER_NAMES[folderKey]);
-            }
+  app.get("/api/platform-folders", authenticateToken, async (req: Request, res: Response) => {
+    const gameId = req.query.gameId as string | undefined;
+    if (gameId) {
+      const game = await storage.getGame(gameId);
+      if (game && Array.isArray(game.platforms)) {
+        const matched = new Set<string>();
+        for (const p of game.platforms) {
+          const name = typeof p === "string" ? p.toLowerCase().trim() : "";
+          const folderKey = IGDB_PLATFORM_NAME_TO_KEY[name];
+          if (folderKey && PLATFORM_FOLDER_NAMES[folderKey]) {
+            matched.add(PLATFORM_FOLDER_NAMES[folderKey]);
           }
-          return res.json([...matched].sort());
         }
+        return res.json([...matched].sort());
       }
-      const folders = Object.values(PLATFORM_FOLDER_NAMES);
-      res.json(folders);
     }
-  );
+    const folders = Object.values(PLATFORM_FOLDER_NAMES);
+    res.json(folders);
+  });
 
   // Database maintenance endpoints
-  app.post(
-    "/api/library/backup",
-    authenticateToken,
-    async (_req: Request, res: Response) => {
-      try {
-        const dbDir = path.dirname(pool.name);
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const backupPath = path.join(dbDir, `sqlite-backup-${timestamp}.db`);
-        pool.backup(backupPath);
-        res.json({ backupPath });
-      } catch (error) {
-        routesLogger.error({ error }, "Failed to backup database");
-        res.status(500).json({ error: "Failed to backup database" });
-      }
+  app.post("/api/library/backup", authenticateToken, async (_req: Request, res: Response) => {
+    try {
+      const dbDir = path.dirname(pool.name);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = path.join(dbDir, `sqlite-backup-${timestamp}.db`);
+      pool.backup(backupPath);
+      res.json({ backupPath });
+    } catch (error) {
+      routesLogger.error({ error }, "Failed to backup database");
+      res.status(500).json({ error: "Failed to backup database" });
     }
-  );
+  });
 
   // Scan library for old-style platform folders and propose renames to RomM standard
-  app.get(
-    "/api/library/migration/scan",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const userId = req.user!.id;
-        const config = await storage.getImportConfig(userId);
-        const resolvedRoot = path.resolve(config.libraryRoot);
+  app.get("/api/library/migration/scan", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const config = await storage.getImportConfig(userId);
+      const resolvedRoot = path.resolve(config.libraryRoot);
 
-        if (!(await fsExtra.pathExists(resolvedRoot))) {
-          return res.json({ renames: [] });
-        }
-
-        const dirs = (await fsExtra.readdir(resolvedRoot, { withFileTypes: true }))
-          .filter((e) => e.isDirectory())
-          .map((e) => e.name);
-
-        routesLogger.debug({ resolvedRoot, dirs }, "Migration scan directories");
-
-        const dirLookup = new Set(dirs.map((d) => d.toLowerCase()));
-
-        const renames: Array<{ oldName: string; newName: string; merge: boolean }> = [];
-        for (const [key, oldName] of Object.entries(OLD_PLATFORM_FOLDER_NAMES)) {
-          const newName = PLATFORM_FOLDER_NAMES[key];
-          if (!newName || oldName === newName) continue;
-          const oldExists = dirLookup.has(oldName.toLowerCase());
-          if (oldExists) {
-            const actualOldName = dirs.find((d) => d.toLowerCase() === oldName.toLowerCase())!;
-            if (actualOldName === newName) continue; // already named correctly
-            const newExists = dirs.some((d) => d !== actualOldName && d.toLowerCase() === newName.toLowerCase());
-            renames.push({ oldName: actualOldName, newName, merge: newExists });
-          }
-        }
-
-        res.json({ renames });
-      } catch (error) {
-        routesLogger.error({ error }, "Failed to scan for migration");
-        res.status(500).json({ error: "Failed to scan library" });
+      if (!(await fsExtra.pathExists(resolvedRoot))) {
+        return res.json({ renames: [] });
       }
+
+      const dirs = (await fsExtra.readdir(resolvedRoot, { withFileTypes: true }))
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+
+      routesLogger.debug({ resolvedRoot, dirs }, "Migration scan directories");
+
+      const dirLookup = new Set(dirs.map((d) => d.toLowerCase()));
+
+      const renames: Array<{ oldName: string; newName: string; merge: boolean }> = [];
+      for (const [key, oldName] of Object.entries(OLD_PLATFORM_FOLDER_NAMES)) {
+        const newName = PLATFORM_FOLDER_NAMES[key];
+        if (!newName || oldName === newName) continue;
+        const oldExists = dirLookup.has(oldName.toLowerCase());
+        if (oldExists) {
+          const actualOldName = dirs.find((d) => d.toLowerCase() === oldName.toLowerCase())!;
+          if (actualOldName === newName) continue; // already named correctly
+          const newExists = dirs.some(
+            (d) => d !== actualOldName && d.toLowerCase() === newName.toLowerCase()
+          );
+          renames.push({ oldName: actualOldName, newName, merge: newExists });
+        }
+      }
+
+      res.json({ renames });
+    } catch (error) {
+      routesLogger.error({ error }, "Failed to scan for migration");
+      res.status(500).json({ error: "Failed to scan library" });
     }
-  );
+  });
 
   // Apply folder renames from old naming to RomM standard
   app.post(
@@ -2213,7 +2231,9 @@ fileSize: f.fileSize,
         const config = await storage.getImportConfig(userId);
         const resolvedRoot = path.resolve(config.libraryRoot);
 
-        const { renames } = req.body as { renames: Array<{ oldName: string; newName: string; merge?: boolean }> };
+        const { renames } = req.body as {
+          renames: Array<{ oldName: string; newName: string; merge?: boolean }>;
+        };
         if (!renames || !Array.isArray(renames)) {
           return res.status(400).json({ error: "renames array is required" });
         }
@@ -2241,20 +2261,38 @@ fileSize: f.fileSize,
             const newPath = path.join(resolvedRoot, newName);
 
             if (!(await fsExtra.pathExists(oldPath))) {
-              results.push({ oldName, newName, action: "", success: false, error: "Source folder does not exist" });
+              results.push({
+                oldName,
+                newName,
+                action: "",
+                success: false,
+                error: "Source folder does not exist",
+              });
               continue;
             }
 
             if (merge) {
               if (!(await fsExtra.pathExists(newPath))) {
-                results.push({ oldName, newName, action: "merge", success: false, error: "Target folder does not exist for merge" });
+                results.push({
+                  oldName,
+                  newName,
+                  action: "merge",
+                  success: false,
+                  error: "Target folder does not exist for merge",
+                });
                 continue;
               }
               await fsExtra.copy(oldPath, newPath, { overwrite: true });
               await fsExtra.remove(oldPath);
             } else {
               if (await fsExtra.pathExists(newPath)) {
-                results.push({ oldName, newName, action: "rename", success: false, error: "Target folder already exists" });
+                results.push({
+                  oldName,
+                  newName,
+                  action: "rename",
+                  success: false,
+                  error: "Target folder already exists",
+                });
                 continue;
               }
               await fsExtra.rename(oldPath, newPath);
@@ -2264,16 +2302,29 @@ fileSize: f.fileSize,
             const oldPrefix = path.resolve(oldPath) + path.sep;
             const newPrefix = path.resolve(newPath) + path.sep;
             const pattern = oldPrefix + "%";
-            const gamesResult = db.run(sql`UPDATE games SET library_path = REPLACE(library_path, ${oldPrefix}, ${newPrefix}) WHERE library_path LIKE ${pattern}`);
-            const filesResult = db.run(sql`UPDATE game_files SET file_path = REPLACE(file_path, ${oldPrefix}, ${newPrefix}) WHERE file_path LIKE ${pattern}`);
+            const gamesResult = db.run(
+              sql`UPDATE games SET library_path = REPLACE(library_path, ${oldPrefix}, ${newPrefix}) WHERE library_path LIKE ${pattern}`
+            );
+            const filesResult = db.run(
+              sql`UPDATE game_files SET file_path = REPLACE(file_path, ${oldPrefix}, ${newPrefix}) WHERE file_path LIKE ${pattern}`
+            );
 
             results.push({
-              oldName, newName, action: merge ? "merge" : "rename", success: true,
+              oldName,
+              newName,
+              action: merge ? "merge" : "rename",
+              success: true,
               gamesUpdated: Number(gamesResult.changes ?? 0),
               filesUpdated: Number(filesResult.changes ?? 0),
             });
           } catch (err) {
-            results.push({ oldName, newName, action: merge ? "merge" : "rename", success: false, error: (err as Error).message });
+            results.push({
+              oldName,
+              newName,
+              action: merge ? "merge" : "rename",
+              success: false,
+              error: (err as Error).message,
+            });
           }
         }
 
@@ -2293,7 +2344,7 @@ fileSize: f.fileSize,
       try {
         const { gameId } = req.params;
         const userId = req.user!.id;
-        const { filePath, category, platformDir } = req.body;
+        const { filePath, category, platformDir, targetDir } = req.body;
 
         routesLogger.debug({ filePath, category, gameId }, "Manual import request received");
         if (!filePath || typeof filePath !== "string") {
@@ -2321,7 +2372,10 @@ fileSize: f.fileSize,
             const downloader = downloaders.find((d) => d.id === dl.downloaderId);
             if (!downloader) continue;
             try {
-              const details = await DownloaderManager.getDownloadDetails(downloader, dl.downloadHash);
+              const details = await DownloaderManager.getDownloadDetails(
+                downloader,
+                dl.downloadHash
+              );
               if (details?.downloadDir && filePath.startsWith(details.downloadDir)) {
                 matchedDownloadId = dl.id;
                 break;
@@ -2364,145 +2418,175 @@ fileSize: f.fileSize,
   );
 
   // Scan a folder for manual import (lists files with metadata)
-  app.post(
-    "/api/import/manual/scan",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const { path: scanPath } = req.body;
-        if (!scanPath || typeof scanPath !== "string") {
-          return res.status(400).json({ error: "path is required" });
-        }
-
-        if (!fs.existsSync(scanPath)) {
-          return res.status(400).json({ error: "Path does not exist" });
-        }
-
-        const stats = await fs.promises.stat(scanPath);
-        let files: Array<{ name: string; path: string; size: number; isDirectory: boolean }> = [];
-
-        if (stats.isDirectory()) {
-          const entries = await fs.promises.readdir(scanPath);
-          for (const entry of entries) {
-            const entryPath = `${scanPath}/${entry}`;
-            try {
-              const entryStats = await fs.promises.stat(entryPath);
-              files.push({ name: entry, path: entryPath, size: entryStats.size, isDirectory: entryStats.isDirectory() });
-            } catch { /* skip unreadable */ }
-          }
-        } else {
-          files.push({ name: path.basename(scanPath), path: scanPath, size: stats.size, isDirectory: false });
-        }
-
-        // Filter out directories and non-media files
-        const mediaExtensions = new Set([".iso", ".bin", ".cue", ".gdi", ".chd", ".rvz", ".wbfs", ".wad", ".nsp", ".xci", ".nca", ".pkg", ".pup", ".zip", ".rar", ".7z", ".tar", ".gz"]);
-        files = files.filter((f) => !f.isDirectory && mediaExtensions.has(path.extname(f.name).toLowerCase()));
-
-        res.json({ files });
-      } catch (error) {
-        routesLogger.error({ error }, "error scanning for manual import");
-        res.status(500).json({ error: "Failed to scan path" });
+  app.post("/api/import/manual/scan", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { path: scanPath } = req.body;
+      if (!scanPath || typeof scanPath !== "string") {
+        return res.status(400).json({ error: "path is required" });
       }
+
+      if (!fs.existsSync(scanPath)) {
+        return res.status(400).json({ error: "Path does not exist" });
+      }
+
+      const stats = await fs.promises.stat(scanPath);
+      let files: Array<{ name: string; path: string; size: number; isDirectory: boolean }> = [];
+
+      if (stats.isDirectory()) {
+        const entries = await fs.promises.readdir(scanPath);
+        for (const entry of entries) {
+          const entryPath = `${scanPath}/${entry}`;
+          try {
+            const entryStats = await fs.promises.stat(entryPath);
+            files.push({
+              name: entry,
+              path: entryPath,
+              size: entryStats.size,
+              isDirectory: entryStats.isDirectory(),
+            });
+          } catch {
+            /* skip unreadable */
+          }
+        }
+      } else {
+        files.push({
+          name: path.basename(scanPath),
+          path: scanPath,
+          size: stats.size,
+          isDirectory: false,
+        });
+      }
+
+      // Filter out directories and non-media files
+      const mediaExtensions = new Set([
+        ".iso",
+        ".bin",
+        ".cue",
+        ".gdi",
+        ".chd",
+        ".rvz",
+        ".wbfs",
+        ".wad",
+        ".nsp",
+        ".xci",
+        ".nca",
+        ".pkg",
+        ".pup",
+        ".zip",
+        ".rar",
+        ".7z",
+        ".tar",
+        ".gz",
+      ]);
+      files = files.filter(
+        (f) => !f.isDirectory && mediaExtensions.has(path.extname(f.name).toLowerCase())
+      );
+
+      res.json({ files });
+    } catch (error) {
+      routesLogger.error({ error }, "error scanning for manual import");
+      res.status(500).json({ error: "Failed to scan path" });
     }
-  );
+  });
 
   // Execute manual import for a list of files
-  app.post(
-    "/api/import/manual/execute",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const { imports } = req.body;
-        if (!Array.isArray(imports) || imports.length === 0) {
-          return res.status(400).json({ error: "imports array is required" });
-        }
-
-        const userId = req.user!.id;
-        const results: Array<{ filePath: string; success: boolean; error?: string }> = [];
-
-        for (const item of imports) {
-          const { filePath, gameId, category, platformDir } = item;
-
-          if (!filePath || !gameId || !category) {
-            results.push({ filePath, success: false, error: "Missing required fields (filePath, gameId, category)" });
-            continue;
-          }
-
-          if (!["main", "dlc", "update", "extra", "packs"].includes(category)) {
-            results.push({ filePath, success: false, error: "Invalid category" });
-            continue;
-          }
-
-          try {
-            if (!fs.existsSync(filePath)) {
-              results.push({ filePath, success: false, error: "File does not exist" });
-              continue;
-            }
-
-            const game = await resolveOwnedGame(gameId, userId, res);
-            if (!game) {
-              results.push({ filePath, success: false, error: "Game not found or not owned" });
-              continue;
-            }
-
-            const result = await importManager.manualImportFile(filePath, game, category, platformDir);
-
-            const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
-            await storage.addGameFile({
-              gameId: game.id,
-              originalName,
-              storedName: originalName,
-              category,
-              filePath: result.newPath,
-              fileSize: result.fileSize,
-            });
-
-            await storage.updateGame(game.id, { libraryPath: result.destDir });
-            if (game.status !== "owned") {
-              await storage.updateGameStatus(game.id, { status: "owned" });
-            }
-
-            results.push({ filePath, success: true });
-          } catch (err) {
-            results.push({ filePath, success: false, error: (err as Error).message });
-          }
-        }
-
-        res.json({ results });
-      } catch (error) {
-        routesLogger.error({ error }, "error executing manual import");
-        res.status(500).json({ error: "Failed to execute manual import" });
+  app.post("/api/import/manual/execute", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { imports } = req.body;
+      if (!Array.isArray(imports) || imports.length === 0) {
+        return res.status(400).json({ error: "imports array is required" });
       }
+
+      const userId = req.user!.id;
+      const results: Array<{ filePath: string; success: boolean; error?: string }> = [];
+
+      for (const item of imports) {
+        const { filePath, gameId, category, platformDir } = item;
+
+        if (!filePath || !gameId || !category) {
+          results.push({
+            filePath,
+            success: false,
+            error: "Missing required fields (filePath, gameId, category)",
+          });
+          continue;
+        }
+
+        if (!["main", "dlc", "update", "extra", "packs"].includes(category)) {
+          results.push({ filePath, success: false, error: "Invalid category" });
+          continue;
+        }
+
+        try {
+          if (!fs.existsSync(filePath)) {
+            results.push({ filePath, success: false, error: "File does not exist" });
+            continue;
+          }
+
+          const game = await resolveOwnedGame(gameId, userId, res);
+          if (!game) {
+            results.push({ filePath, success: false, error: "Game not found or not owned" });
+            continue;
+          }
+
+          const result = await importManager.manualImportFile(
+            filePath,
+            game,
+            category,
+            platformDir
+          );
+
+          const originalName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
+          await storage.addGameFile({
+            gameId: game.id,
+            originalName,
+            storedName: originalName,
+            category,
+            filePath: result.newPath,
+            fileSize: result.fileSize,
+          });
+
+          await storage.updateGame(game.id, { libraryPath: result.destDir });
+          if (game.status !== "owned") {
+            await storage.updateGameStatus(game.id, { status: "owned" });
+          }
+
+          results.push({ filePath, success: true });
+        } catch (err) {
+          results.push({ filePath, success: false, error: (err as Error).message });
+        }
+      }
+
+      res.json({ results });
+    } catch (error) {
+      routesLogger.error({ error }, "error executing manual import");
+      res.status(500).json({ error: "Failed to execute manual import" });
     }
-  );
+  });
 
   // Delete a game file record
-  app.delete(
-    "/api/game-files/:id",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const { id } = req.params;
-        const file = await storage.getGameFile(id);
-        if (!file) {
-          return res.status(404).json({ error: "Game file not found" });
-        }
-        try {
-          await fs.promises.unlink(file.filePath);
-        } catch {
-          // File may already be missing from disk — still remove the record
-        }
-        const deleted = await storage.removeGameFile(id);
-        if (!deleted) {
-          return res.status(500).json({ error: "Failed to remove game file record" });
-        }
-        res.json({ success: true });
-      } catch (error) {
-        routesLogger.error({ error }, "error deleting game file");
-        res.status(500).json({ error: "Failed to delete game file" });
+  app.delete("/api/game-files/:id", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const file = await storage.getGameFile(id);
+      if (!file) {
+        return res.status(404).json({ error: "Game file not found" });
       }
+      try {
+        await fs.promises.unlink(file.filePath);
+      } catch {
+        // File may already be missing from disk — still remove the record
+      }
+      const deleted = await storage.removeGameFile(id);
+      if (!deleted) {
+        return res.status(500).json({ error: "Failed to remove game file record" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      routesLogger.error({ error }, "error deleting game file");
+      res.status(500).json({ error: "Failed to delete game file" });
     }
-  );
+  });
 
   // Unlink a game file from its content (removes the file record without deleting the file on disk)
   app.patch(
@@ -2560,14 +2644,10 @@ fileSize: f.fileSize,
   );
 
   // Clear entire IGDB cache
-  app.post(
-    "/api/igdb/clear-cache",
-    authenticateToken,
-    async (_req: Request, res: Response) => {
-      const cleared = igdbClient.clearAllCache();
-      res.json({ success: true, cleared });
-    }
-  );
+  app.post("/api/igdb/clear-cache", authenticateToken, async (_req: Request, res: Response) => {
+    const cleared = igdbClient.clearAllCache();
+    res.json({ success: true, cleared });
+  });
 
   // IGDB discovery routes
 

@@ -44,7 +44,8 @@ export interface ImportStrategy {
     game: Game,
     targetRoot: string,
     config: ImportConfig,
-    platformDir?: string
+    platformDir?: string,
+    targetDir?: string
   ): Promise<ImportReview>;
   executeImport(review: ImportReview, transferMode: TransferMode): Promise<ImportResult>;
 }
@@ -171,7 +172,8 @@ export class PCImportStrategy implements ImportStrategy {
     game: Game,
     targetRoot: string,
     config: ImportConfig,
-    platformDir?: string
+    platformDir?: string,
+    targetDir?: string
   ): Promise<ImportReview> {
     if (isSensitivePath(sourcePath)) {
       throw new Error("Refusing to process a sensitive system path");
@@ -179,7 +181,9 @@ export class PCImportStrategy implements ImportStrategy {
 
     const stats = await fs.stat(sourcePath);
     const cleanTitle = sanitizeFsName(game.title);
-    const gameDir = path.join(targetRoot, platformDir ?? "PC", cleanTitle);
+    const gameDir = targetDir
+      ? path.resolve(targetDir)
+      : path.join(targetRoot, platformDir ?? "PC", cleanTitle);
 
     const destinationExists = await fs.pathExists(gameDir);
     const needsReview = destinationExists && !config.overwriteExisting;

@@ -52,12 +52,12 @@ export const IGDB_PLATFORM_NAME_TO_KEY: Record<string, string> = {
   "playstation 4": "ps4",
   "playstation 3": "ps3",
   "playstation 2": "ps2",
-  "playstation": "ps1",
+  playstation: "ps1",
   "xbox series x|s": "xbox series",
   "xbox one": "xbox",
   "xbox 360": "xbox360",
   "wii u": "wiiu",
-  "wii": "wii",
+  wii: "wii",
   "nintendo 64": "n64",
   "super nintendo entertainment system": "snes",
   "nintendo entertainment system": "nes",
@@ -66,17 +66,17 @@ export const IGDB_PLATFORM_NAME_TO_KEY: Record<string, string> = {
   "game boy advance": "gba",
   "game boy color": "gbc",
   "game boy": "gb",
-  "gamecube": "gamecube",
+  gamecube: "gamecube",
   "sega mega drive/genesis": "mega drive",
   "master system": "master system",
-  "dreamcast": "dreamcast",
+  dreamcast: "dreamcast",
   "game gear": "game gear",
   "atari 2600": "atari 2600",
   "neo geo": "neo geo",
-  "linux": "linux",
-  "mac": "mac",
+  linux: "linux",
+  mac: "mac",
   "ps vita": "psvita",
-  "psp": "psp",
+  psp: "psp",
 };
 
 export const PLATFORM_FOLDER_NAMES: Record<string, string> = {
@@ -192,7 +192,64 @@ export class ImportManager {
     return RELEASE_PLATFORM_TO_IGDB_ID[releasePlatformKey];
   }
 
+  // Folder names the game is actually released for (from game.platforms).
+  // Used as the gate: a title-parsed platform is only used if the game is released on it.
+  private getGamePlatformFolderNames(game: { platforms?: unknown }): Set<string> {
+    const folders = new Set<string>();
+    if (!Array.isArray(game.platforms)) return folders;
+
+    for (const p of game.platforms) {
+      const platformId = this.extractPlatformIdFromElement(p);
+      if (platformId !== undefined) {
+        const igdbKey = IGDB_ID_TO_PLATFORM_KEY[platformId];
+        if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) {
+          folders.add(PLATFORM_FOLDER_NAMES[igdbKey]);
+        }
+      }
+      const name = typeof p === "string" ? p.toLowerCase().trim() : "";
+      const folderKey = IGDB_PLATFORM_NAME_TO_KEY[name];
+      if (folderKey && PLATFORM_FOLDER_NAMES[folderKey]) {
+        folders.add(PLATFORM_FOLDER_NAMES[folderKey]);
+      }
+    }
+
+    return folders;
+  }
+
   private resolvePlatformFolderName(downloadTitle: string, game: { platforms?: unknown }): string {
+    const gameFolders = this.getGamePlatformFolderNames(game);
+
+    if (gameFolders.size > 0) {
+      // The game's released platforms are known: the title-parsed platform is only
+      // valid if the game was actually released on it. Otherwise discard it.
+      const key = this.getReleasePlatformKey(downloadTitle);
+      if (key && PLATFORM_FOLDER_NAMES[key]) {
+        const folder = PLATFORM_FOLDER_NAMES[key];
+        if (gameFolders.has(folder)) return folder;
+        logger.info(
+          { downloadTitle, detectedPlatform: folder, gameFolders: [...gameFolders] },
+          "[ImportManager] Title platform not in game's released platforms, discarding"
+        );
+      }
+
+      // Fall back to the game's primary released platform
+      const igdbId = this.getPrimaryPlatformId(game);
+      if (igdbId !== undefined) {
+        const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
+        if (
+          igdbKey &&
+          PLATFORM_FOLDER_NAMES[igdbKey] &&
+          gameFolders.has(PLATFORM_FOLDER_NAMES[igdbKey])
+        ) {
+          return PLATFORM_FOLDER_NAMES[igdbKey];
+        }
+      }
+
+      // Otherwise the first released platform folder
+      return [...gameFolders][0];
+    }
+
+    // No platform info on the game: fall back to title parse, then primary platform, then PC
     const key = this.getReleasePlatformKey(downloadTitle);
     if (key && PLATFORM_FOLDER_NAMES[key]) return PLATFORM_FOLDER_NAMES[key];
 
@@ -200,17 +257,6 @@ export class ImportManager {
     if (igdbId !== undefined) {
       const igdbKey = IGDB_ID_TO_PLATFORM_KEY[igdbId];
       if (igdbKey && PLATFORM_FOLDER_NAMES[igdbKey]) return PLATFORM_FOLDER_NAMES[igdbKey];
-    }
-
-    // Match IGDB platform name strings (e.g. "Nintendo Switch") to folder keys
-    if (Array.isArray(game.platforms)) {
-      for (const p of game.platforms) {
-        const name = typeof p === "string" ? p.toLowerCase().trim() : "";
-        const folderKey = IGDB_PLATFORM_NAME_TO_KEY[name];
-        if (folderKey && PLATFORM_FOLDER_NAMES[folderKey]) {
-          return PLATFORM_FOLDER_NAMES[folderKey];
-        }
-      }
     }
 
     return "PC";
@@ -486,7 +532,11 @@ export class ImportManager {
 
       await fs.ensureDir(libraryRoot);
 
-      const platformDir = await this.resolvePlatformDirWithFallback(download.downloadTitle || "", game, libraryRoot);
+      const platformDir = await this.resolvePlatformDirWithFallback(
+        download.downloadTitle || "",
+        game,
+        libraryRoot
+      );
       const plan = await strategy.planImport(
         processingPath,
         game,
@@ -630,7 +680,11 @@ export class ImportManager {
       // Source resolution failed — still return a proposed path based on game title
     }
 
-    const platformDir = await this.resolvePlatformDirWithFallback(download.downloadTitle || "", game, libraryRoot);
+    const platformDir = await this.resolvePlatformDirWithFallback(
+      download.downloadTitle || "",
+      game,
+      libraryRoot
+    );
     const fallbackProposedPath = path.join(libraryRoot, platformDir, sanitizeFsName(game.title));
 
     if (resolvedOriginalPath) {
@@ -821,7 +875,8 @@ export class ImportManager {
     filePath: string,
     game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
     category: "main" | "dlc" | "update" | "extra" | "packs",
-    platformDir?: string
+    platformDir?: string,
+    targetDir?: string
   ): Promise<{ destDir: string; newPath: string; fileSize: number }> {
     const config = await this.storage.getImportConfig(game.userId ?? undefined);
     const libraryRoot = config.libraryRoot || "/data";
@@ -831,8 +886,16 @@ export class ImportManager {
     const fileName = path.basename(filePath);
 
     const strategy = new PCImportStrategy();
-    const resolvedPlatform = platformDir || await this.resolvePlatformDirWithFallback(fileName, game, libraryRoot);
-    const plan = await strategy.planImport(filePath, game, libraryRoot, { ...config, overwriteExisting: true }, resolvedPlatform);
+    const resolvedPlatform =
+      platformDir || (await this.resolvePlatformDirWithFallback(fileName, game, libraryRoot));
+    const plan = await strategy.planImport(
+      filePath,
+      game,
+      libraryRoot,
+      { ...config, overwriteExisting: true },
+      resolvedPlatform,
+      targetDir
+    );
 
     if (plan.needsReview) {
       throw new Error(`Import requires review: ${plan.reviewReason}`);
