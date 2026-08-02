@@ -149,12 +149,13 @@ async function categorizeSourceFiles(
     return [{ name, category: "main" }];
   }
 
-  const entries = await fs.readdir(sourcePath);
+  const files = await gatherFiles(sourcePath);
   const result: FileCategoryEntry[] = [];
 
-  for (const name of entries) {
+  for (const filePath of files) {
+    const name = path.relative(sourcePath, filePath);
     if (sortExtras) {
-      const parsed = path.parse(name);
+      const parsed = path.parse(path.basename(name));
       const { category } = categorizeDownload(parsed.name);
       result.push({ name, category });
     } else {
@@ -189,9 +190,6 @@ export class PCImportStrategy implements ImportStrategy {
       ? path.resolve(targetDir)
       : path.join(targetRoot, platformDir ?? "PC", cleanTitle);
 
-    const destinationExists = await fs.pathExists(gameDir);
-    const needsReview = destinationExists && !config.overwriteExisting;
-
     const fileCategories = await categorizeSourceFiles(sourcePath, config.sortExtras);
 
     let proposedPath: string;
@@ -201,6 +199,9 @@ export class PCImportStrategy implements ImportStrategy {
       const ext = path.extname(sourcePath);
       proposedPath = gameDir + ext;
     }
+
+    const destinationExists = await fs.pathExists(proposedPath);
+    const needsReview = destinationExists && !config.overwriteExisting;
 
     return {
       needsReview,

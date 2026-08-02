@@ -55,7 +55,6 @@ export default function ManualImportModal({
   const { toast } = useToast();
   const [step, setStep] = useState<"scan" | "assign">("scan");
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
-  const [scanPath, setScanPath] = useState("");
   const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
   const [assignments, setAssignments] = useState<ImportAssignment[]>([]);
   const [transferMode, setTransferMode] = useState<ImportTransferMode | "">("");
@@ -83,8 +82,8 @@ export default function ManualImportModal({
   });
 
   const { data: platformFolders = [] } = useQuery<string[]>({
-    queryKey: game ? ["/api/platform-folders?gameId=" + game.id] : ["/api/platform-folders"],
-    enabled: open,
+    queryKey: ["/api/platform-folders"],
+    enabled: open && !isSingleFile,
   });
 
   const { data: importConfig } = useQuery<ImportConfig>({
@@ -97,11 +96,11 @@ export default function ManualImportModal({
     return [{ label: "Library", path: importConfig.libraryRoot }];
   }, [importConfig]);
 
-  const handleFolderSelect = (path: string) => {
-    setScanPath(path);
-    setFileBrowserOpen(false);
-    setStep("scan");
-  };
+  useEffect(() => {
+    if (open && importConfig?.transferMode && !transferMode) {
+      setTransferMode(importConfig.transferMode);
+    }
+  }, [importConfig?.transferMode, open, transferMode]);
 
   const handleMultiFileSelect = (paths: string[]) => {
     hasSelectedFiles.current = true;
@@ -152,7 +151,14 @@ export default function ManualImportModal({
     },
   });
 
-  const importToastRef = useRef<any>(null);
+  const handleFolderSelect = (path: string) => {
+    hasSelectedFiles.current = true;
+    setFileBrowserOpen(false);
+    setStep("scan");
+    scanMutation.mutate(path);
+  };
+
+  const importToastRef = useRef<ReturnType<typeof toast> | null>(null);
 
   const executeMutation = useMutation({
     mutationFn: async () => {
@@ -188,9 +194,16 @@ export default function ManualImportModal({
     },
     onSuccess: (results) => {
       queryClient.invalidateQueries({ queryKey: ["/api/games"] });
+      const affectedGameIds = new Set(
+        assignments.filter((assignment) => assignment.gameId).map((assignment) => assignment.gameId)
+      );
+      for (const gameId of affectedGameIds) {
+        queryClient.invalidateQueries({ queryKey: [`/api/games/${gameId}/content`] });
+      }
       const successCount = results.filter((r) => r.success).length;
       if (importToastRef.current) {
         importToastRef.current.update({
+          id: importToastRef.current.id,
           description: `Imported ${successCount} of ${results.length} files`,
         });
         importToastRef.current = null;
@@ -229,7 +242,6 @@ export default function ManualImportModal({
 
   const reset = () => {
     setStep("scan");
-    setScanPath("");
     setScannedFiles([]);
     setAssignments([]);
     setTransferMode("");
@@ -270,10 +282,14 @@ export default function ManualImportModal({
         {step === "assign" && (
           <>
             <div className="flex items-center gap-3 pb-2">
-              <Label className="text-xs text-muted-foreground whitespace-nowrap">
+              <Label
+                htmlFor="manual-import-transfer-mode"
+                className="text-xs text-muted-foreground whitespace-nowrap"
+              >
                 Transfer mode
               </Label>
               <select
+                id="manual-import-transfer-mode"
                 value={transferMode}
                 onChange={(e) => setTransferMode(e.target.value as ImportTransferMode)}
                 className="h-8 text-xs rounded-md border border-input bg-background px-2"
@@ -281,9 +297,16 @@ export default function ManualImportModal({
                 <option value="">Select mode...</option>
                 <option value="move">Move</option>
                 <option value="copy">Copy</option>
+                <option value="hardlink">Hardlink</option>
+                <option value="symlink">Symlink</option>
               </select>
               <p className="text-xs text-muted-foreground">
-                Move cuts the file from its current location; Copy leaves the original in place.
+                {transferMode === "move" && "Moves the source into the library."}
+                {transferMode === "copy" && "Copies the file and keeps the source."}
+                {transferMode === "hardlink" &&
+                  "Creates a hardlink when both paths are on the same filesystem."}
+                {transferMode === "symlink" && "Creates a symbolic link to the source file."}
+                {!transferMode && "Choose how files should be placed in the library."}
               </p>
             </div>
             <ScrollArea className="flex-1 border rounded-md">
@@ -313,21 +336,6 @@ export default function ManualImportModal({
                         <div className="flex-1">
                           <Label className="text-xs text-muted-foreground">Game</Label>
                           <p className="text-sm font-medium">{game!.title}</p>
-                        </div>
-                        <div className="w-48">
-                          <Label className="text-xs text-muted-foreground">Platform</Label>
-                          <select
-                            value={a.platformDir}
-                            onChange={(e) => updateAssignment(i, { platformDir: e.target.value })}
-                            className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
-                          >
-                            <option value="">Auto-detect</option>
-                            {platformFolders.map((pf) => (
-                              <option key={pf} value={pf}>
-                                {pf}
-                              </option>
-                            ))}
-                          </select>
                         </div>
                       </div>
                     ) : (

@@ -235,7 +235,10 @@ class IGDBClient {
       .sort((left, right) => (right.first_release_date ?? 0) - (left.first_release_date ?? 0));
 
     if (options.includeUndated === false) {
-      return [...priorityResults, ...otherResults].slice(0, limit);
+      const datedOnly = [...priorityResults, ...otherResults].filter(
+        (game) => typeof game.first_release_date === "number"
+      );
+      return datedOnly.slice(0, limit);
     }
 
     const undatedPriority = priorityResults.filter(
@@ -244,12 +247,8 @@ class IGDBClient {
     const datedPriority = priorityResults.filter(
       (game) => typeof game.first_release_date === "number"
     );
-    const undatedOther = otherResults.filter(
-      (game) => typeof game.first_release_date !== "number"
-    );
-    const datedOther = otherResults.filter(
-      (game) => typeof game.first_release_date === "number"
-    );
+    const undatedOther = otherResults.filter((game) => typeof game.first_release_date !== "number");
+    const datedOther = otherResults.filter((game) => typeof game.first_release_date === "number");
 
     const ordered = options.undatedFirst
       ? [...undatedPriority, ...datedPriority, ...undatedOther, ...datedOther]
@@ -1167,8 +1166,7 @@ class IGDBClient {
       screenshots:
         igdbGame.screenshots?.map((s) => `https:${s.url.replace("t_thumb", "t_screenshot_big")}`) ||
         [],
-      videos:
-        igdbGame.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [],
+      videos: igdbGame.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [],
       igdbWebsites: igdbWebsiteSchema
         .array()
         .catch([])

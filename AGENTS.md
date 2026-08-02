@@ -1,46 +1,73 @@
-<!-- headroom:rtk-instructions -->
+# Questarr Agent Guidance
 
-# RTK (Rust Token Killer) - Token-Optimized Commands
+Questarr is a single-package TypeScript application for discovering, tracking, downloading, and
+post-processing games. The React SPA lives in `client/`, the Express API and background jobs live
+in `server/`, and shared Drizzle/Zod models live in `shared/`.
 
-When running shell commands, **always prefix with `rtk`**. This reduces context
-usage by 60-90% with zero behavior change. If rtk has no filter for a command,
-it passes through unchanged � so it is always safe to use.
+## Load Guidance for the Current Task
 
-## Key Commands
+Before editing a domain, read its guidance file. Load only the files relevant to the task.
+
+- Backend, API, integrations, storage, cron, security, or import work:
+  `docs/agent-guidance/server.md`
+- React UI, client state, routing, accessibility, or frontend tests:
+  `docs/agent-guidance/client.md`
+- Database schema, migrations, snapshots, or data-repair scripts:
+  `docs/agent-guidance/migrations.md`
+
+When a task crosses domains, read every applicable guidance file.
+
+## Sources of Truth
+
+- `shared/schema.ts`: database tables, shared domain types, and validation schemas
+- `server/index.ts`: process startup and service initialization order
+- `server/routes.ts` and `server/routes/`: HTTP interface and orchestration
+- `server/storage.ts`: application persistence contract and implementations
+- `client/src/App.tsx`: client routes and application shell
+- `docs/ARCHITECTURE.md`: intended system boundaries; verify details against code because the
+  document may lag recent implementation
+- `docs/API.md`: intended external API contract; verify endpoints against route registration
+
+## Working Rules
+
+- Preserve all pre-existing working-tree changes. Never discard or overwrite unrelated user work.
+- Keep changes scoped to the request. Do not opportunistically reformat or refactor unrelated code.
+- Use TypeScript strictness and avoid introducing `any` or unchecked type assertions.
+- Never commit credentials, print secrets, or replace masked credentials with placeholder values.
+- Add or update regression tests for behavior changes and bug fixes.
+- Use existing abstractions and conventions before introducing new dependencies or parallel systems.
+- Treat security boundaries as product behavior: authentication, user ownership, SSRF protection,
+  path containment, credential encryption, and archive handling must not be weakened.
+
+## Commands and Verification
+
+Use `rtk` as a command prefix when it is installed. If `rtk` is unavailable, run the underlying
+command directly. On Windows PowerShell systems that block `npm.ps1`, use `npm.cmd`.
+
+Use the narrowest relevant verification:
 
 ```bash
-# Git (59-80% savings)
-rtk git status          rtk git diff            rtk git log
-
-# Files & Search (60-75% savings)
-rtk ls <path>           rtk read <file>         rtk grep <pattern>
-rtk find <pattern>      rtk diff <file>
-
-# Test (90-99% savings) � shows failures only
-rtk pytest tests/       rtk cargo test          rtk test <cmd>
-
-# Build & Lint (80-90% savings) � shows errors only
-rtk tsc                 rtk lint                rtk cargo build
-rtk prettier --check    rtk mypy                rtk ruff check
-
-# Analysis (70-90% savings)
-rtk err <cmd>           rtk log <file>          rtk json <file>
-rtk summary <cmd>       rtk deps                rtk env
-
-# GitHub (26-87% savings)
-rtk gh pr view <n>      rtk gh run list         rtk gh issue list
-
-# Infrastructure (85% savings)
-rtk docker ps           rtk kubectl get         rtk docker logs <c>
-
-# Package managers (70-90% savings)
-rtk pip list            rtk pnpm install        rtk npm run <script>
+npx vitest run path/to/relevant.test.ts
+npm run check
+npm run lint
+npm test
+npm run build
 ```
 
-## Rules
+- Do not rerun tests after every edit. Run the narrowest relevant test once at the end of a
+  substantial change.
+- Run `npm run check` for every TypeScript change.
+- Never run the full test suite unless the user explicitly requests it.
+- Ask before starting any validation expected to take longer than 30 seconds.
+- Run the production build when changing bundling, startup, shared imports, or deployment behavior.
+- Report which checks were run or skipped and distinguish failures from pre-existing warnings.
 
-- In command chains, prefix each segment: `rtk git add . && rtk git commit -m "msg"`
-- For debugging, use raw command without rtk prefix
-- `rtk proxy <cmd>` runs command without filtering but tracks usage
+## Completion Expectations
 
-<!-- /headroom:rtk-instructions -->
+Before handing off an implementation:
+
+1. Review the final diff for accidental or unrelated changes.
+2. Confirm new routes and persistence operations enforce authentication and ownership correctly.
+3. Confirm outbound requests and filesystem paths stay within their security boundaries.
+4. Confirm migrations and shared types remain backward-compatible where required.
+5. Summarize changed behavior, verification evidence, and any remaining risk.

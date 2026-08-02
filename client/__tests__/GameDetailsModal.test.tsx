@@ -73,6 +73,13 @@ vi.mock("lucide-react", () => ({
   ChevronRight: (props: Record<string, unknown>) => (
     <div data-testid="icon-chevron-right" {...props} />
   ),
+  Package: (props: Record<string, unknown>) => <div data-testid="icon-package" {...props} />,
+  FlaskConical: (props: Record<string, unknown>) => (
+    <div data-testid="icon-flask-conical" {...props} />
+  ),
+  Upload: (props: Record<string, unknown>) => <div data-testid="icon-upload" {...props} />,
+  Scan: (props: Record<string, unknown>) => <div data-testid="icon-scan" {...props} />,
+  Play: (props: Record<string, unknown>) => <div data-testid="icon-play" {...props} />,
 }));
 
 vi.mock("react-icons/fa", () => ({
@@ -90,6 +97,7 @@ vi.mock("react-icons/fa", () => ({
 
 vi.mock("react-icons/si", () => ({
   SiGogdotcom: (props: Record<string, unknown>) => <div data-testid="icon-si-gog" {...props} />,
+  SiIgdb: (props: Record<string, unknown>) => <div data-testid="icon-si-igdb" {...props} />,
   SiEpicgames: (props: Record<string, unknown>) => <div data-testid="icon-si-epic" {...props} />,
   SiProtondb: (props: Record<string, unknown>) => <div data-testid="icon-si-protondb" {...props} />,
   SiPcgamingwiki: (props: Record<string, unknown>) => (
@@ -193,6 +201,33 @@ describe("GameDetailsModal", () => {
     // Media tab uses forceMount so screenshots are always in the DOM (hidden until tab activated)
     expect(screen.getByTestId("screenshot-0")).toBeInTheDocument();
     expect(screen.getByTestId("screenshot-1")).toBeInTheDocument();
+  });
+
+  it("shows a YouTube thumbnail before loading the trailer player", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(
+      makeFetchMock({
+        "/api/games/1/content": {
+          slots: [],
+          videos: [{ videoId: "abc123XYZ_0", name: "Launch trailer" }],
+        },
+      })
+    );
+
+    renderComponent();
+
+    const playButton = await screen.findByRole("button", { name: "Play Launch trailer" });
+    expect(screen.getByAltText("Launch trailer thumbnail")).toHaveAttribute(
+      "src",
+      "https://i.ytimg.com/vi/abc123XYZ_0/hqdefault.jpg"
+    );
+    expect(screen.queryByTitle("Launch trailer")).not.toBeInTheDocument();
+
+    fireEvent.click(playButton);
+
+    expect(await screen.findByTitle("Launch trailer")).toHaveAttribute(
+      "src",
+      "https://www.youtube.com/embed/abc123XYZ_0?autoplay=1&rel=0"
+    );
   });
 
   it("opens the screenshot lightbox and navigates with the carousel controls", async () => {

@@ -16,7 +16,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   return {
     ...actual,
     useQuery: () => ({
-      data: { transferMode: "move", libraryRoot: "/games/library" },
+      data: { transferMode: "move", libraryRoot: "/games/library", files: [] },
       isLoading: false,
       error: null,
     }),

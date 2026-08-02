@@ -182,5 +182,29 @@ describe("ImportStrategies", () => {
       expect(plan.needsReview).toBe(true);
       expect(plan.reviewReason).toMatch(/Destination already exists/);
     });
+
+    it("categorizes nested files without treating their directories as files", async () => {
+      const root = tempDir();
+      const source = path.join(root, "downloads", "game-folder");
+      await fs.ensureDir(path.join(source, "nested"));
+      await fs.writeFile(path.join(source, "base.nsp"), "base");
+      await fs.writeFile(path.join(source, "nested", "Game Update v1.nsp"), "update");
+
+      const strategy = new PCImportStrategy();
+      const plan = await strategy.planImport(
+        source,
+        makeGame({ title: "My Game" }),
+        path.join(root, "library"),
+        makeImportConfig({ sortExtras: true, overwriteExisting: true })
+      );
+
+      expect(plan.fileCategories).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "base.nsp" }),
+          expect.objectContaining({ name: path.join("nested", "Game Update v1.nsp") }),
+        ])
+      );
+      expect(plan.fileCategories).not.toContainEqual(expect.objectContaining({ name: "nested" }));
+    });
   });
 });

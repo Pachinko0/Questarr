@@ -678,4 +678,104 @@ describe("API Routes - Additional Coverage", () => {
       expect(res.body.error).toBe("Validation failed");
     });
   });
+
+  describe("Game content and manual import", () => {
+    it("falls back to stored video metadata when IGDB content is unavailable", async () => {
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-1",
+        title: "Test Game",
+        igdbId: null,
+        videos: [{ videoId: "abc123XYZ_0", name: "Launch trailer" }],
+      } as unknown as Game);
+
+      const res = await request(app).get("/api/games/game-1/content");
+
+      expect(res.status).toBe(200);
+      expect(res.body.videos).toEqual([{ videoId: "abc123XYZ_0", name: "Launch trailer" }]);
+    });
+
+    it("uses the configured transfer mode when manual import omits an override", async () => {
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-1",
+      } as unknown as Game);
+      const res = await request(app).post("/api/games/game-1/manual-import").send({
+        filePath: "/missing/game.iso",
+        category: "main",
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("File does not exist");
+    });
+
+    it("rejects an invalid manual import transfer mode", async () => {
+      const res = await request(app).post("/api/games/game-1/manual-import").send({
+        filePath: "/missing/game.iso",
+        category: "main",
+        transferMode: "teleport",
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid transferMode");
+    });
+  });
+
+  describe("Game and file ownership boundaries", () => {
+    it("does not expose files for an unowned download", async () => {
+      vi.mocked(storage.getGameDownload).mockResolvedValue(undefined);
+
+      const res = await request(app).get("/api/game-files/by-download/download-1");
+
+      expect(res.status).toBe(404);
+      expect(storage.getGameFilesByDownload).not.toHaveBeenCalled();
+    });
+
+    it("does not expose platform metadata for another user's game", async () => {
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-2",
+        platforms: ["Nintendo Switch"],
+      } as unknown as Game);
+
+      const res = await request(app).get("/api/platform-folders?gameId=game-1");
+
+      expect(res.status).toBe(403);
+    });
+
+    it("does not delete a file record owned by another user", async () => {
+      vi.mocked(storage.getGameFile).mockResolvedValue({
+        id: "file-1",
+        gameId: "game-1",
+        filePath: "/data/library/switch/Test Game.nsp",
+      } as never);
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-2",
+      } as unknown as Game);
+
+      const res = await request(app).delete("/api/game-files/file-1");
+
+      expect(res.status).toBe(403);
+      expect(storage.removeGameFile).not.toHaveBeenCalled();
+    });
+
+    it("does not enqueue a download for another user's game", async () => {
+      const gameId = "123e4567-e89b-12d3-a456-426614174000";
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: gameId,
+        userId: "user-2",
+      } as unknown as Game);
+
+      const res = await request(app).post("/api/downloads").send({
+        gameId,
+        url: "https://example.com/game.torrent",
+        title: "Test Game",
+      });
+
+      expect(res.status).toBe(403);
+      expect(storage.getEnabledDownloaders).not.toHaveBeenCalled();
+      expect(DownloaderManager.addDownloadWithFallback).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -64,7 +64,13 @@ export default function ImportReviewModal({
     ? `/api/imports/${downloadId}/plan?sourcePath=${encodeURIComponent(sourcePath)}`
     : `/api/imports/${downloadId}/plan`;
 
-  type PlanFile = { name: string; isArchive: boolean; category?: string; suggestedContentId?: number; suggestedContentName?: string };
+  type PlanFile = {
+    name: string;
+    isArchive: boolean;
+    category?: string;
+    suggestedContentId?: number;
+    suggestedContentName?: string;
+  };
 
   const { data: planData } = useQuery<{
     originalPath: string;
@@ -138,8 +144,8 @@ export default function ImportReviewModal({
     },
     onSuccess: () => {
       toast({
-        title: "Import Confirmed",
-        description: "The import has been queued for execution.",
+        title: "Import Complete",
+        description: "The files were imported into the library.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/imports/pending"] });
       queryClient.invalidateQueries({ queryKey: ["/api/downloads"] });
@@ -256,7 +262,10 @@ export default function ImportReviewModal({
                         {importConfig?.sortExtras && !f.isArchive && (
                           <div className="ml-auto shrink-0 flex items-center gap-1">
                             {f.suggestedContentName && !f.isArchive && (
-                              <span className="text-[10px] text-muted-foreground truncate max-w-[100px]" title={f.suggestedContentName}>
+                              <span
+                                className="text-[10px] text-muted-foreground truncate max-w-[100px]"
+                                title={f.suggestedContentName}
+                              >
                                 {f.suggestedContentName}
                               </span>
                             )}

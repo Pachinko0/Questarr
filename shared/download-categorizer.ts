@@ -52,17 +52,17 @@ export function categorizeDownload(title: string): CategorizedDownload {
     }
   }
 
+  // Check for DLC (specific keywords like DLC/expansion take priority over "pack"/"addon")
+  for (const pattern of DLC_PATTERNS) {
+    if (pattern.test(title)) {
+      return { category: "dlc", confidence: 0.85 };
+    }
+  }
+
   // Check for packs/addons
   for (const pattern of PACKS_PATTERNS) {
     if (pattern.test(title)) {
       return { category: "packs", confidence: 0.85 };
-    }
-  }
-
-  // Check for DLC
-  for (const pattern of DLC_PATTERNS) {
-    if (pattern.test(title)) {
-      return { category: "dlc", confidence: 0.85 };
     }
   }
 

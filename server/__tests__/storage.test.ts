@@ -753,6 +753,7 @@ describe("Import And Mapping Helpers", () => {
       renamePattern: "{Title} ({Region})",
       overwriteExisting: false,
       transferMode: "hardlink",
+      sortExtras: false,
       importPlatformIds: [],
       ignoredExtensions: [],
       minFileSize: 0,

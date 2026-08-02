@@ -60,6 +60,7 @@ export function createStorageMock() {
     updateUserSettings: vi.fn().mockResolvedValue({}),
     updateGameStatus: vi.fn(),
     updateGameHidden: vi.fn(),
+    updateGame: vi.fn(),
     updateGameUserRating: vi.fn(),
     updateGameNotes: vi.fn(),
     updateGameSearchResultsAvailable: vi.fn().mockResolvedValue(undefined),
@@ -102,12 +103,19 @@ export function createStorageMock() {
     getAllRssFeedItems: vi.fn().mockResolvedValue([]),
     updateUserSteamId: vi.fn(),
     getGame: vi.fn(),
+    getGameDownload: vi.fn(),
     addReleaseBlacklist: vi.fn(),
     getReleaseBlacklist: vi.fn().mockResolvedValue([]),
     getAllReleaseBlacklists: vi.fn().mockResolvedValue([]),
     removeReleaseBlacklist: vi.fn(),
     getReleaseBlacklistSet: vi.fn().mockResolvedValue(new Set()),
     getImportConfig: vi.fn(),
+    getGameFiles: vi.fn().mockResolvedValue([]),
+    getGameFilesByDownload: vi.fn().mockResolvedValue([]),
+    getGameFile: vi.fn(),
+    addGameFile: vi.fn(),
+    addGameFilesBatch: vi.fn(),
+    removeGameFile: vi.fn(),
   };
 }
 

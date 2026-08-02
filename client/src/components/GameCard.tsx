@@ -132,6 +132,7 @@ const GameCard = ({
       onClick={handleDetailsClick}
       className={`group hover-elevate transition-all duration-200 mx-auto w-full max-w-full cursor-pointer flex flex-col h-full sm:max-w-[225px] ${game.hidden ? "opacity-60 grayscale" : ""}`}
       data-testid={`card-game-${game.id}`}
+      aria-label={`View details for ${game.title}`}
     >
       <div className="relative">
         {/* ⚡ Bolt: Lazy loading images prevents fetching all game covers upfront,

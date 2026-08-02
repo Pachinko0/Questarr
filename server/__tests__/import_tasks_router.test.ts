@@ -7,6 +7,7 @@ const { mockStorage } = vi.hoisted(() => ({
     getImportTasks: vi.fn(),
     getImportTask: vi.fn(),
     getImportTaskItems: vi.fn(),
+    getGameFilesByGameIds: vi.fn().mockResolvedValue(new Map()),
   },
 }));
 

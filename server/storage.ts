@@ -307,7 +307,10 @@ export interface IStorage {
   addGameFilesBatch(files: InsertGameFile[]): Promise<GameFile[]>;
   removeGameFile(id: string): Promise<boolean>;
   removeGameFilesByGameId(gameId: string): Promise<number>;
-  updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null>;
+  updateGameFile(
+    id: string,
+    data: Partial<Pick<GameFile, "igdbContentId">>
+  ): Promise<GameFile | null>;
 }
 
 export class MemStorage implements IStorage {
@@ -489,7 +492,7 @@ export class MemStorage implements IStorage {
       searchResultsAvailable: false,
       userRating: null,
       notes: null,
-      libraryPath: null,
+      libraryPath: insertGame.libraryPath ?? null,
       addedAt: new Date(),
       completedAt: null,
     };
@@ -1363,7 +1366,10 @@ export class MemStorage implements IStorage {
     return toDelete.length;
   }
 
-  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null> {
+  async updateGameFile(
+    id: string,
+    data: Partial<Pick<GameFile, "igdbContentId">>
+  ): Promise<GameFile | null> {
     const existing = this.gameFiles.get(id);
     if (!existing) return null;
     const updated = { ...existing, ...data };
@@ -1702,6 +1708,7 @@ export class DatabaseStorage implements IStorage {
       originalReleaseDate: insertGame.originalReleaseDate ?? null,
       releaseStatus: insertGame.releaseStatus ?? "upcoming",
       earlyAccess: insertGame.earlyAccess ?? false,
+      libraryPath: insertGame.libraryPath ?? null,
       addedAt: new Date(),
     };
 
@@ -2473,13 +2480,24 @@ export class DatabaseStorage implements IStorage {
 
   async addGameFile(file: InsertGameFile): Promise<GameFile> {
     const id = randomUUID();
-    const [gf] = await db.insert(gameFiles).values({ ...file, id, category: file.category as "main" | "dlc" | "update" | "extra" | "packs" }).returning();
+    const [gf] = await db
+      .insert(gameFiles)
+      .values({
+        ...file,
+        id,
+        category: file.category as "main" | "dlc" | "update" | "extra" | "packs",
+      })
+      .returning();
     return gf;
   }
 
   async addGameFilesBatch(files: InsertGameFile[]): Promise<GameFile[]> {
     if (files.length === 0) return [];
-    const values = files.map((file) => ({ ...file, id: randomUUID(), category: file.category as "main" | "dlc" | "update" | "extra" | "packs" }));
+    const values = files.map((file) => ({
+      ...file,
+      id: randomUUID(),
+      category: file.category as "main" | "dlc" | "update" | "extra" | "packs",
+    }));
     return db.insert(gameFiles).values(values).returning();
   }
 
@@ -2493,14 +2511,13 @@ export class DatabaseStorage implements IStorage {
     return result.changes ?? 0;
   }
 
-  async updateGameFile(id: string, data: Partial<Pick<GameFile, "igdbContentId">>): Promise<GameFile | null> {
+  async updateGameFile(
+    id: string,
+    data: Partial<Pick<GameFile, "igdbContentId">>
+  ): Promise<GameFile | null> {
     const [existing] = await db.select().from(gameFiles).where(eq(gameFiles.id, id));
     if (!existing) return null;
-    const [updated] = await db
-      .update(gameFiles)
-      .set(data)
-      .where(eq(gameFiles.id, id))
-      .returning();
+    const [updated] = await db.update(gameFiles).set(data).where(eq(gameFiles.id, id)).returning();
     return updated ?? null;
   }
 

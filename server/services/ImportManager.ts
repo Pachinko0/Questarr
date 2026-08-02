@@ -11,6 +11,7 @@ import {
   sanitizeFsName,
   transferFile,
   type FileCategoryEntry,
+  type ImportResult,
 } from "./ImportStrategies.js";
 import { DownloaderManager } from "../downloaders.js";
 import { igdbClient } from "../igdb.js";
@@ -394,10 +395,68 @@ export class ImportManager {
     libraryPath: string
   ): Promise<void> {
     await this.storage.updateGameDownloadStatus(downloadId, "imported");
-    await this.storage.updateGame(game.id, { libraryPath });
+    await this.setLibraryPathOnce(game, libraryPath);
     if (game.status !== "owned") {
       await this.storage.updateGameStatus(game.id, { status: "owned" });
     }
+  }
+
+  /**
+   * libraryPath is write-once and preserves the exact import target: a directory
+   * for folder-based games or a file for flat/single-file games. Imports must
+   * never move it, so this only writes when no path is set yet.
+   */
+  async setLibraryPathOnce(
+    game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
+    candidatePath: string
+  ): Promise<void> {
+    if (game.libraryPath) return;
+    const persistedGame = await this.storage.getGame(game.id);
+    if (persistedGame?.libraryPath) {
+      game.libraryPath = persistedGame.libraryPath;
+      return;
+    }
+
+    const libraryPath = path.resolve(candidatePath);
+    await this.storage.updateGame(game.id, { libraryPath });
+    // Keep callers that reuse the same game object (such as batch manual import)
+    // from overwriting the first path later in the same workflow.
+    game.libraryPath = libraryPath;
+  }
+
+  private async persistImportedFiles(
+    gameId: string,
+    downloadId: string,
+    result: ImportResult,
+    fileCategories?: FileCategoryEntry[],
+    fallbackContentId?: number
+  ): Promise<void> {
+    if (result.filesPlaced.length === 0) {
+      throw new Error("Import completed without placing any files");
+    }
+
+    const files: InsertGameFile[] = await Promise.all(
+      result.filesPlaced.map(async (filePath, index) => {
+        const stat = await fs.stat(filePath);
+        if (stat.isDirectory()) {
+          throw new Error(`Import result is not a file: ${filePath}`);
+        }
+
+        const categoryEntry = fileCategories?.[index];
+        return {
+          gameId,
+          downloadId,
+          originalName: path.basename(categoryEntry?.name ?? filePath),
+          storedName: path.basename(filePath),
+          category: categoryEntry?.category ?? "main",
+          filePath,
+          fileSize: stat.size,
+          igdbContentId: categoryEntry?.igdbContentId ?? fallbackContentId,
+        };
+      })
+    );
+
+    await this.storage.addGameFilesBatch(files);
   }
 
   private async verifyLocalPath(
@@ -563,60 +622,36 @@ export class ImportManager {
         await fs.remove(processingPath);
       }
 
-      await this.finalizeImport(downloadId, game, result.destDir);
-
-      if (plan.fileCategories && plan.fileCategories.length > 0) {
-        const gameDir = result.destDir;
-
-        // Try to match download title against IGDB content items
-        let contentMatchId: number | undefined;
-        if (game.igdbId && download.downloadTitle) {
-          try {
-            const igdbGame = await igdbClient.getGameById(game.igdbId);
-            const allContent = [
-              ...(igdbGame?.expansions ?? []),
-              ...(igdbGame?.dlcs ?? []),
-              ...(igdbGame?.standalone_expansions ?? []),
-            ];
-            const titleLower = download.downloadTitle.toLowerCase();
-            for (const item of allContent) {
-              if (titleLower.includes(item.name.toLowerCase())) {
-                contentMatchId = item.id;
-                break;
-              }
+      // Try to match download title against IGDB content items.
+      let contentMatchId: number | undefined;
+      if (plan.fileCategories?.length && game.igdbId && download.downloadTitle) {
+        try {
+          const igdbGame = await igdbClient.getGameById(game.igdbId);
+          const allContent = [
+            ...(igdbGame?.expansions ?? []),
+            ...(igdbGame?.dlcs ?? []),
+            ...(igdbGame?.standalone_expansions ?? []),
+          ];
+          const titleLower = download.downloadTitle.toLowerCase();
+          for (const item of allContent) {
+            if (titleLower.includes(item.name.toLowerCase())) {
+              contentMatchId = item.id;
+              break;
             }
-          } catch {
-            // IGDB unavailable, proceed without content matching
           }
+        } catch {
+          // IGDB unavailable, proceed without content matching
         }
-
-        const files: InsertGameFile[] = await Promise.all(
-          plan.fileCategories.map(async (fc) => {
-            const filePath = path.join(
-              gameDir,
-              fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`
-            );
-            let fileSize: number | null = null;
-            try {
-              const stat = await fs.stat(filePath);
-              fileSize = stat.size;
-            } catch {
-              // file may not exist yet
-            }
-            return {
-              gameId: game.id,
-              downloadId: downloadId,
-              originalName: fc.name,
-              storedName: fc.name,
-              category: fc.category,
-              filePath,
-              fileSize,
-              igdbContentId: fc.igdbContentId ?? contentMatchId,
-            };
-          })
-        );
-        await this.storage.addGameFilesBatch(files);
       }
+
+      await this.persistImportedFiles(
+        game.id,
+        downloadId,
+        result,
+        plan.fileCategories,
+        contentMatchId
+      );
+      await this.finalizeImport(downloadId, game, result.destDir);
 
       if (
         config.autoDeleteAfterImport &&
@@ -827,37 +862,8 @@ export class ImportManager {
       const strategy = new PCImportStrategy();
       const result = await strategy.executeImport(planToExecute, transferMode);
 
+      await this.persistImportedFiles(game.id, downloadId, result, overridePlan.fileCategories);
       await this.finalizeImport(downloadId, game, result.destDir);
-
-      if (overridePlan.fileCategories && overridePlan.fileCategories.length > 0) {
-        const gameDir = result.destDir;
-        const files: InsertGameFile[] = await Promise.all(
-          overridePlan.fileCategories.map(async (fc) => {
-            const filePath = path.join(
-              gameDir,
-              fc.category === "main" ? fc.name : `${fc.category}/${fc.name}`
-            );
-            let fileSize: number | null = null;
-            try {
-              const stat = await fs.stat(filePath);
-              fileSize = stat.size;
-            } catch {
-              // file may not exist yet
-            }
-            return {
-              gameId: game.id,
-              downloadId: downloadId,
-              originalName: fc.name,
-              storedName: fc.name,
-              category: fc.category,
-              filePath,
-              fileSize,
-              igdbContentId: (fc as FileCategoryEntry).igdbContentId,
-            };
-          })
-        );
-        await this.storage.addGameFilesBatch(files);
-      }
     } catch (err) {
       logger.error({ err, downloadId }, "[ImportManager] confirmImport failed");
       try {
@@ -881,6 +887,10 @@ export class ImportManager {
     targetDir?: string,
     transferMode?: ImportTransferMode
   ): Promise<{ destDir: string; newPath: string; fileSize: number }> {
+    if (isSensitivePath(filePath)) {
+      throw new Error("Refusing to import a sensitive system path");
+    }
+
     const config = await this.storage.getImportConfig(game.userId ?? undefined);
     const libraryRoot = config.libraryRoot || "/data";
     await fs.ensureDir(libraryRoot);
@@ -888,19 +898,38 @@ export class ImportManager {
     const stats = await fs.stat(filePath);
     const fileName = path.basename(filePath);
 
-    // Scan-disk import: we already know the file's real location and the game's
-    // real folder, so place it directly into <gameFolder>/<category>. No
-    // platform/title resolution needed. Always moves the file into place.
+    // Scan-disk import is a relocation workflow: the source is already inside
+    // the game tree but may be in the wrong category folder. Always move it so
+    // no misplaced duplicate is left behind.
+    // destDir is the game root (used for libraryPath), newPath is the category subfolder.
     if (targetDir) {
+      const gameRoot = path.resolve(targetDir);
       const destDir = path.resolve(targetDir, category === "main" ? "" : category);
       await fs.ensureDir(destDir);
-      await transferFile(filePath, path.join(destDir, fileName), "move");
-      return { destDir, newPath: path.join(destDir, fileName), fileSize: stats.size };
+      const newPath = path.join(destDir, fileName);
+      await transferFile(filePath, newPath, "move");
+      return { destDir: gameRoot, newPath, fileSize: stats.size };
     }
 
     const strategy = new PCImportStrategy();
     const resolvedPlatform =
       platformDir || (await this.resolvePlatformDirWithFallback(fileName, game, libraryRoot));
+    const resolvedRoot = path.resolve(libraryRoot);
+    const platformRoot = path.resolve(libraryRoot, resolvedPlatform);
+    const platformRelative = path.relative(resolvedRoot, platformRoot);
+    if (
+      platformRelative === ".." ||
+      platformRelative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(platformRelative)
+    ) {
+      throw new Error("Platform folder is outside configured library root");
+    }
+
+    const cleanTitle = sanitizeFsName(game.title);
+    if (!cleanTitle) {
+      throw new Error("Game title does not produce a safe library folder name");
+    }
+
     const plan = await strategy.planImport(
       filePath,
       game,
@@ -910,14 +939,21 @@ export class ImportManager {
       targetDir
     );
 
+    if (category !== "main") {
+      plan.proposedPath = path.join(platformRoot, cleanTitle);
+      plan.fileCategories = [{ name: fileName, category }];
+    }
+
     if (plan.needsReview) {
       throw new Error(`Import requires review: ${plan.reviewReason}`);
     }
 
     const result = await strategy.executeImport(plan, transferMode ?? config.transferMode);
+    const [newPath] = result.filesPlaced;
+    if (!newPath) {
+      throw new Error("Import completed without placing a file");
+    }
 
-    const ext = path.extname(result.destDir);
-    const destDir = ext ? path.dirname(result.destDir) : result.destDir;
-    return { destDir, newPath: result.destDir, fileSize: stats.size };
+    return { destDir: result.destDir, newPath, fileSize: stats.size };
   }
 }

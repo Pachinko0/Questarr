@@ -77,6 +77,7 @@ import path from "path";
 import fs from "fs";
 import fsExtra from "fs-extra";
 import { readLastLogLines } from "./log-file.js";
+import { isSensitivePath } from "./path-security.js";
 
 // Root directory for the file system browser; restrict browsing to this tree
 const FILE_BROWSER_ROOT = fs.realpathSync(process.cwd());
@@ -118,6 +119,40 @@ import { sanitizeFsName } from "./services/ImportStrategies.js";
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
 // Adult-content filtering makes game-list responses vary per user, so they must not be shared-cacheable
 const CC_IGDB_GAME_LIST_PRIVATE = "private, max-age=3600, stale-while-revalidate=600";
+
+type LibraryTargetSafety =
+  | { safe: true; resolvedTarget: string }
+  | {
+      safe: false;
+      resolvedTarget: string;
+      reason: "outside-library-root" | "library-root" | "shared-platform-directory";
+    };
+
+function assessLibraryTarget(libraryRoot: string, candidate: string): LibraryTargetSafety {
+  const resolvedRoot = path.resolve(libraryRoot);
+  const resolvedTarget = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+
+  if (relative === "") {
+    return { safe: false, resolvedTarget, reason: "library-root" };
+  }
+
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return { safe: false, resolvedTarget, reason: "outside-library-root" };
+  }
+
+  const parentIsLibraryRoot = path.dirname(resolvedTarget) === resolvedRoot;
+  const platformFolderNames = new Set(
+    [...Object.values(PLATFORM_FOLDER_NAMES), ...Object.values(OLD_PLATFORM_FOLDER_NAMES)].map(
+      (name) => name.toLowerCase()
+    )
+  );
+  if (parentIsLibraryRoot && platformFolderNames.has(path.basename(resolvedTarget).toLowerCase())) {
+    return { safe: false, resolvedTarget, reason: "shared-platform-directory" };
+  }
+
+  return { safe: true, resolvedTarget };
+}
 
 // ⚡ Bolt: Simple in-memory cache implementation to avoid external dependencies
 // Caches storage info for 30 seconds to prevent spamming downloaders
@@ -1277,6 +1312,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { id } = req.params;
         const statusUpdate = updateGameStatusSchema.parse(req.body);
 
+        if (!(await resolveOwnedGame(id, req.user!.id, res))) return;
+
         const updatedGame = await storage.updateGameStatus(id, statusUpdate);
         if (!updatedGame) {
           return res.status(404).json({ error: "Game not found" });
@@ -1303,6 +1340,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const { id } = req.params;
         const { hidden } = updateGameHiddenSchema.parse(req.body);
+
+        if (!(await resolveOwnedGame(id, req.user!.id, res))) return;
 
         const updatedGame = await storage.updateGameHidden(id, hidden);
         if (!updatedGame) {
@@ -1537,10 +1576,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (existing.length > 0) continue;
         if (!game.libraryPath) continue;
 
-        const gameDir = path.resolve(game.libraryPath);
-        let entries: string[];
+        const targetSafety = assessLibraryTarget(resolvedRoot, game.libraryPath);
+        if (!targetSafety.safe) {
+          routesLogger.warn(
+            { gameId: game.id, libraryPath: game.libraryPath, reason: targetSafety.reason },
+            "skipping unsafe library path during game file backfill"
+          );
+          continue;
+        }
+
+        let gameDir = path.resolve(game.libraryPath);
+        let libraryStat: fs.Stats;
         try {
-          entries = await fs.promises.readdir(gameDir);
+          libraryStat = await fs.promises.stat(gameDir);
         } catch {
           continue;
         }
@@ -1551,44 +1599,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
           filePath: string;
         }> = [];
 
-        for (const entry of entries) {
-          const fullPath = path.join(gameDir, entry);
-          let stat: fs.Stats;
+        if (libraryStat.isFile()) {
+          const name = path.basename(gameDir);
+          const { category } = categorizeDownload(path.parse(name).name);
+          files.push({
+            name,
+            category: category as "main" | "dlc" | "update" | "extra" | "packs",
+            filePath: gameDir,
+          });
+        }
+
+        if (CATEGORY_SUBDIRS.has(path.basename(gameDir).toLowerCase())) {
+          gameDir = path.dirname(gameDir);
+        }
+
+        if (libraryStat.isDirectory()) {
+          let entries: string[];
           try {
-            stat = await fs.promises.stat(fullPath);
+            entries = await fs.promises.readdir(gameDir);
           } catch {
             continue;
           }
 
-          const lowerName = entry.toLowerCase();
-          if (stat.isDirectory() && CATEGORY_SUBDIRS.has(lowerName)) {
-            let subEntries: string[];
+          for (const entry of entries) {
+            const fullPath = path.join(gameDir, entry);
+            let stat: fs.Stats;
             try {
-              subEntries = await fs.promises.readdir(fullPath);
+              stat = await fs.promises.stat(fullPath);
             } catch {
               continue;
             }
-            for (const sub of subEntries) {
-              const subFullPath = path.join(fullPath, sub);
+
+            const lowerName = entry.toLowerCase();
+            if (stat.isDirectory() && CATEGORY_SUBDIRS.has(lowerName)) {
+              let subEntries: string[];
               try {
-                await fs.promises.stat(subFullPath);
-                files.push({
-                  name: sub,
-                  category: lowerName as "dlc" | "update" | "extra" | "packs",
-                  filePath: subFullPath,
-                });
+                subEntries = await fs.promises.readdir(fullPath);
               } catch {
                 continue;
               }
+              for (const sub of subEntries) {
+                const subFullPath = path.join(fullPath, sub);
+                try {
+                  const subStat = await fs.promises.stat(subFullPath);
+                  if (!subStat.isFile()) continue;
+                  files.push({
+                    name: sub,
+                    category: lowerName as "dlc" | "update" | "extra" | "packs",
+                    filePath: subFullPath,
+                  });
+                } catch {
+                  continue;
+                }
+              }
+            } else if (!stat.isDirectory()) {
+              const nameWithoutExt = path.parse(entry).name;
+              const { category } = categorizeDownload(nameWithoutExt);
+              files.push({
+                name: entry,
+                category: category as "main" | "dlc" | "update" | "extra" | "packs",
+                filePath: fullPath,
+              });
             }
-          } else if (!stat.isDirectory()) {
-            const nameWithoutExt = path.parse(entry).name;
-            const { category } = categorizeDownload(nameWithoutExt);
-            files.push({
-              name: entry,
-              category: category as "main" | "dlc" | "update" | "extra" | "packs",
-              filePath: fullPath,
-            });
           }
         }
 
@@ -1636,7 +1708,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Remove game from collection
   type FileDeletionResult =
     | { deleted: true; path: string | null }
-    | { deleted: false; reason: "outside-library-root" | "delete-failed"; path: string };
+    | {
+        deleted: false;
+        reason:
+          "outside-library-root" | "library-root" | "shared-platform-directory" | "delete-failed";
+        path: string;
+      };
 
   app.delete(
     "/api/games/:id",
@@ -1647,21 +1724,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const { id } = req.params;
         const deleteFiles = req.query.deleteFiles === "true";
+        const game = await resolveOwnedGame(id, req.user!.id, res);
+        if (!game) return;
 
         let fileDeletion: FileDeletionResult | null = null;
 
         if (deleteFiles) {
-          const game = await storage.getGame(id);
-          if (game?.libraryPath) {
-            const config = await storage.getImportConfig(game.userId ?? undefined);
-            const resolvedRoot = path.resolve(config.libraryRoot);
-            const resolvedTarget = path.resolve(game.libraryPath);
-            const insideRoot =
-              resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + path.sep);
+          if (game.libraryPath) {
+            const config = await storage.getImportConfig(req.user!.id);
+            const targetSafety = assessLibraryTarget(config.libraryRoot, game.libraryPath);
 
-            if (insideRoot) {
+            if (targetSafety.safe) {
               try {
-                await fsExtra.remove(resolvedTarget);
+                await fsExtra.remove(targetSafety.resolvedTarget);
                 fileDeletion = { deleted: true, path: game.libraryPath };
               } catch (fileError) {
                 routesLogger.warn(
@@ -1672,12 +1747,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
             } else {
               routesLogger.warn(
-                { gameId: id, libraryPath: game.libraryPath },
-                "skipped deleting library files: path outside configured library root"
+                { gameId: id, libraryPath: game.libraryPath, reason: targetSafety.reason },
+                "skipped deleting library files: unsafe library target"
               );
               fileDeletion = {
                 deleted: false,
-                reason: "outside-library-root",
+                reason: targetSafety.reason,
                 path: game.libraryPath,
               };
             }
@@ -1737,6 +1812,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return null;
     }
     return game;
+  }
+
+  /** Resolves a game file and verifies ownership through its parent game. */
+  async function resolveOwnedGameFile(fileId: string, userId: string, res: Response) {
+    const file = await storage.getGameFile(fileId);
+    if (!file) {
+      res.status(404).json({ error: "Game file not found" });
+      return null;
+    }
+    const game = await resolveOwnedGame(file.gameId, userId, res);
+    return game ? file : null;
   }
 
   // Add release to blacklist for a specific game
@@ -1835,13 +1921,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ files: [] });
       }
 
-      const gameDir = path.resolve(game.libraryPath);
+      const config = await storage.getImportConfig(userId);
+      const targetSafety = assessLibraryTarget(config.libraryRoot, game.libraryPath);
+      if (!targetSafety.safe) {
+        routesLogger.warn(
+          { gameId: game.id, libraryPath: game.libraryPath, reason: targetSafety.reason },
+          "Scan disk refused unsafe game library path"
+        );
+        return res.status(409).json({
+          error: "Game library path is unsafe and requires repair",
+          reason: targetSafety.reason,
+        });
+      }
 
-      // Existing games may have libraryPath set to the platform root (pre-fix bug).
+      const gameDir = targetSafety.resolvedTarget;
+      let libraryStat: fs.Stats;
+      try {
+        libraryStat = await fs.promises.stat(gameDir);
+      } catch {
+        return res.json({ files: [], resolvedDir: "" });
+      }
+
+      if (libraryStat.isFile()) {
+        const name = path.basename(gameDir);
+        const { category } = categorizeDownload(path.parse(name).name);
+        return res.json({
+          files: [{ name, path: gameDir, category, isDirectory: false }],
+          resolvedDir: "",
+        });
+      }
+
+      if (!libraryStat.isDirectory()) {
+        return res.json({ files: [], resolvedDir: "" });
+      }
+
+      // Existing games may have libraryPath set to the platform root (pre-fix bug)
+      // or to a category subfolder (e.g. .../Game/dlc). Step up to the actual game
+      // root so the scan walks the whole game folder, not a subfolder of it.
+      const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra", "packs"]);
+      let gameRoot = gameDir;
+      if (CATEGORY_SUBDIRS.has(path.basename(gameDir).toLowerCase())) {
+        gameRoot = path.dirname(gameDir);
+      }
+
       // Try to resolve to the actual game subdirectory if one exists.
       const cleanTitle = sanitizeFsName(game.title);
-      const expectedGameDir = path.join(gameDir, cleanTitle);
-      let resolvedDir = gameDir;
+      const expectedGameDir = path.join(gameRoot, cleanTitle);
+      let resolvedDir = gameRoot;
       let subdirFound = false;
       try {
         if (cleanTitle && (await fs.promises.stat(expectedGameDir)).isDirectory()) {
@@ -1857,6 +1983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: game.title,
           libraryPath: game.libraryPath,
           gameDir,
+          gameRoot,
           cleanTitle,
           expectedGameDir,
           subdirFound,
@@ -1865,7 +1992,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         "Scan disk: path resolution"
       );
 
-      const CATEGORY_SUBDIRS = new Set(["dlc", "update", "extra", "packs"]);
       const files: Array<{ name: string; path: string; category: string; isDirectory: boolean }> =
         [];
 
@@ -2105,10 +2231,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      res.json({
-        slots,
-        videos: igdbGame?.videos?.map((v) => ({ videoId: v.video_id, name: v.name })) || [],
-      });
+      const liveVideos =
+        igdbGame?.videos?.map((video) => ({ videoId: video.video_id, name: video.name })) ?? [];
+      const storedVideos = Array.isArray(game.videos) ? game.videos : [];
+      const videos = (liveVideos.length > 0 ? liveVideos : storedVideos).filter(
+        (video) => typeof video.videoId === "string" && /^[A-Za-z0-9_-]{6,20}$/.test(video.videoId)
+      );
+
+      res.json({ slots, videos });
     } catch (error) {
       routesLogger.error({ error }, "error fetching game content");
       res.status(500).json({ error: "Failed to fetch game content" });
@@ -2122,6 +2252,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: Request, res: Response) => {
       try {
         const { downloadId } = req.params;
+        const download = await storage.getGameDownload(downloadId, req.user!.id);
+        if (!download) {
+          return res.status(404).json({ error: "Download not found" });
+        }
         const files = await storage.getGameFilesByDownload(downloadId);
         res.json(files);
       } catch (error) {
@@ -2135,6 +2269,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/game-files", authenticateToken, async (req: Request, res: Response) => {
     try {
       const parsed = insertGameFileSchema.parse(req.body);
+      const game = await resolveOwnedGame(parsed.gameId, req.user!.id, res);
+      if (!game) return;
+
+      const config = await storage.getImportConfig(req.user!.id);
+      const targetSafety = assessLibraryTarget(config.libraryRoot, parsed.filePath);
+      if (!targetSafety.safe) {
+        return res.status(400).json({ error: "Game file path must be inside the game library" });
+      }
+      try {
+        const stat = await fs.promises.stat(targetSafety.resolvedTarget);
+        if (!stat.isFile()) {
+          return res.status(400).json({ error: "Game file path must point to a file" });
+        }
+      } catch {
+        return res.status(400).json({ error: "Game file path does not exist" });
+      }
+
       const gameFile = await storage.addGameFile(parsed);
       res.status(201).json(gameFile);
     } catch (error) {
@@ -2150,7 +2301,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/platform-folders", authenticateToken, async (req: Request, res: Response) => {
     const gameId = req.query.gameId as string | undefined;
     if (gameId) {
-      const game = await storage.getGame(gameId);
+      const game = await resolveOwnedGame(gameId, req.user!.id, res);
+      if (!game) return;
       if (game && Array.isArray(game.platforms)) {
         const matched = new Set<string>();
         for (const p of game.platforms) {
@@ -2346,7 +2498,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { gameId } = req.params;
         const userId = req.user!.id;
         const { filePath, category, platformDir, targetDir } = req.body;
-        const transferMode = importTransferModeSchema.safeParse(req.body.transferMode);
+        const transferMode = importTransferModeSchema.optional().safeParse(req.body.transferMode);
         if (!transferMode.success) {
           return res.status(400).json({ error: "Invalid transferMode" });
         }
@@ -2360,12 +2512,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "Invalid category" });
         }
 
-        if (!fs.existsSync(filePath)) {
+        const game = await resolveOwnedGame(gameId, userId, res);
+        if (!game) return;
+
+        try {
+          const sourceStat = await fs.promises.stat(filePath);
+          if (!sourceStat.isFile()) {
+            return res.status(400).json({ error: "filePath must point to a file" });
+          }
+        } catch {
           return res.status(400).json({ error: "File does not exist" });
         }
 
-        const game = await resolveOwnedGame(gameId, userId, res);
-        if (!game) return;
+        if (targetDir !== undefined) {
+          if (typeof targetDir !== "string" || !targetDir.trim()) {
+            return res.status(400).json({ error: "Invalid targetDir" });
+          }
+          if (!game.libraryPath) {
+            return res.status(409).json({ error: "Game does not have a library path" });
+          }
+
+          const config = await storage.getImportConfig(userId);
+          let allowedRoot = path.resolve(game.libraryPath);
+          let libraryStat: fs.Stats;
+          try {
+            libraryStat = await fs.promises.stat(allowedRoot);
+          } catch {
+            return res.status(409).json({ error: "Game library path does not exist" });
+          }
+          if (!libraryStat.isDirectory()) {
+            return res.status(409).json({ error: "Cannot import into a file-backed game path" });
+          }
+
+          const categorySubdirs = new Set(["dlc", "update", "extra", "packs"]);
+          if (categorySubdirs.has(path.basename(allowedRoot).toLowerCase())) {
+            allowedRoot = path.dirname(allowedRoot);
+          }
+
+          try {
+            const [realLibraryRoot, realAllowedRoot, realTargetDir] = await Promise.all([
+              fs.promises.realpath(config.libraryRoot),
+              fs.promises.realpath(allowedRoot),
+              fs.promises.realpath(targetDir),
+            ]);
+            const safety = assessLibraryTarget(realLibraryRoot, realAllowedRoot);
+            if (!safety.safe || path.relative(realAllowedRoot, realTargetDir) !== "") {
+              return res
+                .status(400)
+                .json({ error: "targetDir must match the game's library path" });
+            }
+          } catch {
+            return res.status(400).json({ error: "targetDir is not a valid game directory" });
+          }
+        }
 
         // Try to find a matching download for this file
         let matchedDownloadId: string | undefined;
@@ -2415,7 +2614,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           downloadId: matchedDownloadId || null,
         });
 
-        await storage.updateGame(game.id, { libraryPath: result.destDir });
+        await importManager.setLibraryPathOnce(game, result.destDir);
         if (game.status !== "owned") {
           await storage.updateGameStatus(game.id, { status: "owned" });
         }
@@ -2435,6 +2634,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { path: scanPath } = req.body;
       if (!scanPath || typeof scanPath !== "string") {
         return res.status(400).json({ error: "path is required" });
+      }
+
+      if (isSensitivePath(scanPath)) {
+        return res.status(400).json({ error: "Refusing to scan a sensitive system path" });
       }
 
       if (!fs.existsSync(scanPath)) {
@@ -2530,7 +2733,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         try {
-          if (!fs.existsSync(filePath)) {
+          try {
+            const sourceStat = await fs.promises.stat(filePath);
+            if (!sourceStat.isFile()) {
+              results.push({ filePath, success: false, error: "filePath must point to a file" });
+              continue;
+            }
+          } catch {
             results.push({ filePath, success: false, error: "File does not exist" });
             continue;
           }
@@ -2558,7 +2767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             fileSize: result.fileSize,
           });
 
-          await storage.updateGame(game.id, { libraryPath: result.destDir });
+          await importManager.setLibraryPathOnce(game, result.destDir);
           if (game.status !== "owned") {
             await storage.updateGameStatus(game.id, { status: "owned" });
           }
@@ -2580,13 +2789,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/game-files/:id", authenticateToken, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const file = await storage.getGameFile(id);
-      if (!file) {
-        return res.status(404).json({ error: "Game file not found" });
+      const file = await resolveOwnedGameFile(id, req.user!.id, res);
+      if (!file) return;
+
+      const config = await storage.getImportConfig(req.user!.id);
+      const targetSafety = assessLibraryTarget(config.libraryRoot, file.filePath);
+      if (!targetSafety.safe) {
+        return res.status(409).json({
+          error: "Refusing to delete an unsafe game file path",
+          reason: targetSafety.reason,
+        });
       }
+
       try {
-        await fs.promises.unlink(file.filePath);
-      } catch {
+        const stat = await fs.promises.lstat(targetSafety.resolvedTarget);
+        if (!stat.isDirectory()) {
+          await fs.promises.unlink(file.filePath);
+        } else {
+          // Preserve the existing unlink-only behavior for directory records:
+          // remove the database record without recursively deleting the directory.
+          routesLogger.warn(
+            { gameFileId: id, filePath: file.filePath },
+            "game file record points to a directory; leaving it on disk"
+          );
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         // File may already be missing from disk — still remove the record
       }
       const deleted = await storage.removeGameFile(id);
@@ -2607,10 +2835,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
-        const file = await storage.getGameFile(id);
-        if (!file) {
-          return res.status(404).json({ error: "Game file not found" });
-        }
+        const file = await resolveOwnedGameFile(id, req.user!.id, res);
+        if (!file) return;
         const deleted = await storage.removeGameFile(id);
         if (!deleted) {
           return res.status(500).json({ error: "Failed to unlink game file" });
@@ -4060,6 +4286,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (!url || !title) {
           return res.status(400).json({ error: "URL and title are required" });
+        }
+
+        if (gameId) {
+          const game = await resolveOwnedGame(gameId, req.user!.id, res);
+          if (!game) return;
         }
 
         const enabledDownloaders = await storage.getEnabledDownloaders();

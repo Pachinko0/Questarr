@@ -212,6 +212,7 @@ describe("ImportHistoryPage", () => {
           result: "added",
           errorMessage: null,
           gameTitle: "Half-Life 3",
+          gameFiles: [],
         },
         {
           id: "i2",
@@ -219,6 +220,7 @@ describe("ImportHistoryPage", () => {
           result: "failed",
           errorMessage: "No match",
           gameTitle: null,
+          gameFiles: [],
         },
       ],
     };

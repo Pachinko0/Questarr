@@ -26,6 +26,7 @@ vi.mock("lucide-react", () => ({
   Loader2: () => <div data-testid="icon-loader" />,
   Check: () => <div data-testid="icon-check" />,
   X: () => <div />,
+  Info: () => <div />,
 }));
 
 vi.mock("wouter", () => ({

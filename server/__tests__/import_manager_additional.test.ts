@@ -30,6 +30,9 @@ import { makeImportConfig } from "./helpers/import-test-helpers.js";
 
 beforeEach(() => {
   isSensitivePathMock.mockReturnValue(false);
+  fsMock.pathExists.mockResolvedValue(true);
+  fsMock.stat.mockResolvedValue({ isDirectory: () => false });
+  fsMock.readdir.mockResolvedValue([]);
 });
 
 function makeStorage() {
@@ -41,6 +44,7 @@ function makeStorage() {
     updateGameDownloadStatus: vi.fn(),
     updateGameStatus: vi.fn(),
     updateGame: vi.fn(),
+    addGameFilesBatch: vi.fn().mockResolvedValue([]),
     addNotification: vi.fn().mockResolvedValue(undefined),
   };
 }

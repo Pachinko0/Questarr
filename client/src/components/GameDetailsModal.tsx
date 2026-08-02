@@ -91,6 +91,53 @@ import { cn, safeUrl, formatBytes, isDiscoveryId } from "@/lib/utils";
 const GameDownloadDialog = lazy(() => import("./GameDownloadDialog"));
 const ManualImportModal = lazy(() => import("./ManualImportModal"));
 
+const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{6,20}$/;
+
+function YouTubeVideoPreview({ videoId, name }: { videoId: string; name: string }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  if (!YOUTUBE_VIDEO_ID_PATTERN.test(videoId)) return null;
+
+  const title = name || "Game trailer";
+
+  if (isPlaying) {
+    return (
+      <iframe
+        src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`}
+        title={title}
+        className="h-full w-full"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={`Play ${title}`}
+      className="group relative h-full w-full overflow-hidden text-left"
+      onClick={() => setIsPlaying(true)}
+    >
+      <img
+        src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`}
+        alt={`${title} thumbnail`}
+        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+        loading="lazy"
+      />
+      <span className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+      <span className="absolute inset-0 flex items-center justify-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-red-600 text-white shadow-lg transition-transform group-hover:scale-105">
+          <Play className="h-6 w-6 fill-current" aria-hidden="true" />
+        </span>
+      </span>
+      <span className="absolute inset-x-3 bottom-2 truncate text-sm font-medium text-white">
+        {title}
+      </span>
+    </button>
+  );
+}
+
 type ContentSlotFile = {
   id: string;
   originalName: string;
@@ -731,7 +778,6 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       path: string;
       category: string;
       isDirectory: boolean;
-      platformDir: string;
     }>
   >([]);
   const [scanTargetDir, setScanTargetDir] = useState<string>("");
@@ -739,23 +785,9 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   const [manualImportOpen, setManualImportOpen] = useState(false);
   const [importTargetCategory, setImportTargetCategory] = useState<string>("main");
 
-  const { data: scanPlatformFolders = [] } = useQuery<string[]>({
-    queryKey: game ? [`/api/platform-folders?gameId=${game.id}`] : ["/api/platform-folders"],
-    enabled: open && !!game?.id,
-  });
-
   const scanImportMutation = useMutation({
-    mutationFn: async ({
-      filePath,
-      category,
-      platformDir,
-    }: {
-      filePath: string;
-      category: string;
-      platformDir: string;
-    }) => {
+    mutationFn: async ({ filePath, category }: { filePath: string; category: string }) => {
       const body: Record<string, string> = { filePath, category };
-      if (platformDir) body.platformDir = platformDir;
       if (scanTargetDir) body.targetDir = scanTargetDir;
       const res = await apiRequest("POST", `/api/games/${game!.id}/manual-import`, body);
       return res.json();
@@ -770,12 +802,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
   });
 
   const scanImportAllMutation = useMutation({
-    mutationFn: async (files: Array<{ path: string; category: string; platformDir: string }>) => {
+    mutationFn: async (files: Array<{ path: string; category: string }>) => {
       const results: Array<{ path: string; success: boolean; error?: string }> = [];
       for (const file of files) {
         try {
           const body: Record<string, string> = { filePath: file.path, category: file.category };
-          if (file.platformDir) body.platformDir = file.platformDir;
           if (scanTargetDir) body.targetDir = scanTargetDir;
           const res = await apiRequest("POST", `/api/games/${game!.id}/manual-import`, body);
           const data = await res.json();
@@ -1437,13 +1468,13 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {contentData.videos.map((video, index) => (
-                      <div key={index} className="aspect-video rounded-xl overflow-hidden bg-black">
-                        <iframe
-                          src={`https://www.youtube.com/embed/${video.videoId}`}
-                          title={video.name || `Trailer ${index + 1}`}
-                          className="w-full h-full"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowFullScreen
+                      <div
+                        key={video.videoId}
+                        className="aspect-video overflow-hidden rounded-xl bg-black"
+                      >
+                        <YouTubeVideoPreview
+                          videoId={video.videoId}
+                          name={video.name || `Trailer ${index + 1}`}
                         />
                       </div>
                     ))}
@@ -1700,7 +1731,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                             isDirectory: boolean;
                           }>;
                           setScanTargetDir(data.resolvedDir ?? "");
-                          setScanResults(scanned.map((f) => ({ ...f, platformDir: "" })));
+                          setScanResults(scanned);
                           toast({
                             description:
                               scanned.length === 0
@@ -1806,29 +1837,6 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                       <option value="packs">Packs/Addons</option>
                                       <option value="extra">Extra</option>
                                     </select>
-                                    {scanPlatformFolders.length > 1 && (
-                                      <select
-                                        className="h-7 rounded border border-input bg-background px-2 text-xs"
-                                        value={file.platformDir}
-                                        onChange={(e) =>
-                                          setScanResults((prev) =>
-                                            prev.map((f) =>
-                                              f.path === file.path
-                                                ? { ...f, platformDir: e.target.value }
-                                                : f
-                                            )
-                                          )
-                                        }
-                                        aria-label="Platform"
-                                      >
-                                        <option value="">Auto</option>
-                                        {scanPlatformFolders.map((pf) => (
-                                          <option key={pf} value={pf}>
-                                            {pf}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    )}
                                     <Button
                                       variant="ghost"
                                       size="icon"
@@ -1839,7 +1847,6 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                                           {
                                             filePath: file.path,
                                             category: file.category,
-                                            platformDir: file.platformDir,
                                           },
                                           {
                                             onSuccess: () => {

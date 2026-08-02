@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "path";
 
 const { fsMock, downloadersMock } = vi.hoisted(() => ({
   fsMock: {
@@ -35,6 +36,7 @@ describe("ImportManager", () => {
     updateGameDownloadStatus: vi.fn(),
     updateGameStatus: vi.fn(),
     updateGame: vi.fn(),
+    addGameFilesBatch: vi.fn().mockResolvedValue([]),
     addNotification: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -56,11 +58,166 @@ describe("ImportManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fsMock.pathExists.mockResolvedValue(true);
+    fsMock.stat.mockResolvedValue({ isDirectory: () => false });
     pathService.translatePath.mockResolvedValue("/data/downloads/file.iso");
     archiveService.isArchive.mockReturnValue(false);
     storage.getImportConfig.mockResolvedValue(baseConfig);
     storage.addNotification.mockResolvedValue(undefined);
     downloadersMock.removeDownload.mockResolvedValue({ success: true, message: "ok" });
+  });
+
+  it("preserves an exact single-file library path", async () => {
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+    const game = { id: "g1", userId: "u1", libraryPath: null };
+    const filePath = "/data/library/switch/Test Game.nsp";
+
+    await manager.setLibraryPathOnce(game as never, filePath);
+
+    expect(storage.updateGame).toHaveBeenCalledWith("g1", {
+      libraryPath: path.resolve(filePath),
+    });
+    expect(game.libraryPath).toBe(path.resolve(filePath));
+  });
+
+  it("does not replace an existing library path", async () => {
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+
+    await manager.setLibraryPathOnce(
+      { id: "g1", userId: "u1", libraryPath: "/data/library/switch/Existing.nsp" } as never,
+      "/data/library/switch/Replacement.nsp"
+    );
+
+    expect(storage.updateGame).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a path persisted by an earlier import using a stale game object", async () => {
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+    const game = { id: "g1", userId: "u1", libraryPath: null };
+    storage.getGame.mockResolvedValue({
+      ...game,
+      libraryPath: "/data/library/switch/Existing.nsp",
+    });
+
+    await manager.setLibraryPathOnce(game as never, "/data/library/switch/Replacement.nsp");
+
+    expect(storage.updateGame).not.toHaveBeenCalled();
+    expect(game.libraryPath).toBe("/data/library/switch/Existing.nsp");
+  });
+
+  it("records the exact placed file when sorted imports use a game directory", async () => {
+    const sourcePath = "/data/downloads/Test Game.nsp";
+    const gameDir = path.resolve("/data/library/switch/Test Game");
+    const placedFile = path.join(gameDir, "Test Game.nsp");
+    storage.getImportConfig.mockResolvedValue(makeImportConfig({ sortExtras: true }));
+    fsMock.stat.mockResolvedValue({ isDirectory: () => false, size: 123 });
+    const { PCImportStrategy } = await import("../services/ImportStrategies.js");
+    const planSpy = vi.spyOn(PCImportStrategy.prototype, "planImport").mockResolvedValue({
+      needsReview: false,
+      originalPath: sourcePath,
+      proposedPath: gameDir,
+      strategy: "pc",
+      fileCategories: [{ name: "Test Game.nsp", category: "main" }],
+    });
+    const executeSpy = vi.spyOn(PCImportStrategy.prototype, "executeImport").mockResolvedValue({
+      destDir: gameDir,
+      filesPlaced: [placedFile],
+      modeUsed: "move",
+      conflictsResolved: [],
+    });
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+
+    try {
+      const result = await manager.manualImportFile(
+        sourcePath,
+        { id: "g1", userId: "u1", title: "Test Game" } as never,
+        "main",
+        "switch"
+      );
+
+      expect(result).toEqual({ destDir: gameDir, newPath: placedFile, fileSize: 123 });
+    } finally {
+      planSpy.mockRestore();
+      executeSpy.mockRestore();
+    }
+  });
+
+  it("places a manually assigned DLC file in the DLC category directory", async () => {
+    const sourcePath = "/data/downloads/Test Game DLC.nsp";
+    const gameRoot = path.resolve("/data/library/switch/Test Game");
+    const placedFile = path.join(gameRoot, "dlc", "Test Game DLC.nsp");
+    storage.getImportConfig.mockResolvedValue(
+      makeImportConfig({
+        libraryRoot: "/data/library",
+        sortExtras: false,
+        transferMode: "copy",
+      })
+    );
+    fsMock.stat.mockResolvedValue({ isDirectory: () => false, size: 456 });
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+
+    const result = await manager.manualImportFile(
+      sourcePath,
+      { id: "g1", userId: "u1", title: "Test Game" } as never,
+      "dlc",
+      "switch"
+    );
+
+    expect(fsMock.copy).toHaveBeenCalledWith(sourcePath, placedFile, { overwrite: true });
+    expect(result).toEqual({ destDir: gameRoot, newPath: placedFile, fileSize: 456 });
+  });
+
+  it("always moves Scan Disk imports even when another transfer mode is configured", async () => {
+    const sourcePath = path.resolve("/data/library/switch/Test Game/Misplaced DLC.nsp");
+    const gameRoot = path.resolve("/data/library/switch/Test Game");
+    const placedFile = path.join(gameRoot, "dlc", "Misplaced DLC.nsp");
+    storage.getImportConfig.mockResolvedValue(
+      makeImportConfig({ libraryRoot: "/data/library", transferMode: "copy" })
+    );
+    fsMock.stat.mockResolvedValue({ isDirectory: () => false, size: 789 });
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+
+    const result = await manager.manualImportFile(
+      sourcePath,
+      { id: "g1", userId: "u1", title: "Test Game" } as never,
+      "dlc",
+      undefined,
+      gameRoot,
+      "symlink"
+    );
+
+    expect(fsMock.move).toHaveBeenCalledWith(sourcePath, placedFile, { overwrite: true });
+    expect(fsMock.copy).not.toHaveBeenCalled();
+    expect(result).toEqual({ destDir: gameRoot, newPath: placedFile, fileSize: 789 });
   });
 
   it("returns early when download cannot be found", async () => {
@@ -121,6 +278,78 @@ describe("ImportManager", () => {
     await manager.processImport("dl-1", "/remote/path");
 
     expect(storage.updateGameDownloadStatus).toHaveBeenCalledWith("dl-1", "completed");
+  });
+
+  it("records files placed by an ordinary automatic import when sortExtras is disabled", async () => {
+    const game = {
+      id: "g1",
+      title: "Test Game",
+      userId: "u1",
+      status: "wanted",
+      platforms: [6],
+      libraryPath: null,
+    };
+    const placedFile = path.resolve("/data/library/pc/Test Game.iso");
+    storage.getGameDownload.mockResolvedValue({
+      id: "dl-1",
+      gameId: "g1",
+      downloaderId: "d1",
+      downloadTitle: "Test Game",
+    });
+    storage.getGame.mockResolvedValue(game);
+    storage.getDownloader.mockResolvedValue({ id: "d1", name: "qBit", url: "http://qbit" });
+    storage.getImportConfig.mockResolvedValue(
+      makeImportConfig({
+        libraryRoot: "/data/library",
+        sortExtras: false,
+        transferMode: "copy",
+      })
+    );
+    fsMock.stat.mockResolvedValue({ isDirectory: () => false, size: 321 });
+    const { PCImportStrategy } = await import("../services/ImportStrategies.js");
+    const planSpy = vi.spyOn(PCImportStrategy.prototype, "planImport").mockResolvedValue({
+      needsReview: false,
+      originalPath: "/data/downloads/file.iso",
+      proposedPath: placedFile,
+      strategy: "pc",
+    });
+    const executeSpy = vi.spyOn(PCImportStrategy.prototype, "executeImport").mockResolvedValue({
+      destDir: placedFile,
+      filesPlaced: [placedFile],
+      modeUsed: "copy",
+      conflictsResolved: [],
+    });
+    const manager = new ImportManager(
+      storage as never, // NOSONAR
+      pathService as never, // NOSONAR
+      platformService as never, // NOSONAR
+      archiveService as never // NOSONAR
+    );
+
+    try {
+      await manager.processImport("dl-1", "/remote/path");
+
+      expect(storage.addGameFilesBatch).toHaveBeenCalledWith([
+        expect.objectContaining({
+          gameId: "g1",
+          downloadId: "dl-1",
+          category: "main",
+          filePath: placedFile,
+          storedName: "Test Game.iso",
+          fileSize: 321,
+        }),
+      ]);
+      const importedStatusCall = storage.updateGameDownloadStatus.mock.calls.findIndex(
+        ([, status]) => status === "imported"
+      );
+      expect(importedStatusCall).toBeGreaterThanOrEqual(0);
+      expect(storage.addGameFilesBatch.mock.invocationCallOrder[0]).toBeLessThan(
+        storage.updateGameDownloadStatus.mock.invocationCallOrder[importedStatusCall]
+      );
+    } finally {
+      planSpy.mockRestore();
+      executeSpy.mockRestore();
+    }
   });
 
   it("flags manual review when download path is not accessible", async () => {
