@@ -154,6 +154,15 @@ function assessLibraryTarget(libraryRoot: string, candidate: string): LibraryTar
   return { safe: true, resolvedTarget };
 }
 
+function fileCategoryForIgdbContent(
+  igdbCategory: number | null
+): "dlc" | "update" | "extra" | "packs" {
+  if (igdbCategory === 1 || igdbCategory === 2 || igdbCategory === 4) return "dlc";
+  if (igdbCategory === 13) return "packs";
+  if (igdbCategory === 14) return "update";
+  return "extra";
+}
+
 // ⚡ Bolt: Simple in-memory cache implementation to avoid external dependencies
 // Caches storage info for 30 seconds to prevent spamming downloaders
 const storageCache = {
@@ -2148,11 +2157,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (seen.has(item.id)) continue;
             seen.add(item.id);
             const existingGame = userGames.find((g) => g.igdbId === item.id);
-            const itemCategory =
-              item.category === 1 || item.category === 2 || item.category === 4 ? "dlc" : "update";
-            const expFiles = gameFiles.filter((f) =>
-              f.igdbContentId != null ? f.igdbContentId === item.id : f.category === itemCategory
-            );
+            const resolvedIgdbCategory =
+              item.category ?? item.game_type ?? sourceCategory.get(item.id) ?? null;
+            const itemCategory = fileCategoryForIgdbContent(resolvedIgdbCategory);
+            const expFiles = gameFiles.filter((f) => f.igdbContentId === item.id);
             slots.push({
               category: itemCategory,
               label: item.name,
@@ -2173,7 +2181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               rating: item.rating ?? null,
               aggregatedRating: item.aggregated_rating ?? null,
               releaseDate: item.first_release_date ?? null,
-              igdbCategory: item.category ?? item.game_type ?? sourceCategory.get(item.id) ?? null,
+              igdbCategory: resolvedIgdbCategory,
             });
           }
           if (seen.size === 0) {
@@ -2212,7 +2220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         packs: "Packs/Addons",
       };
       for (const cat of fileCategories) {
-        const files = gameFiles.filter((f) => f.category === cat);
+        const files = gameFiles.filter((f) => f.category === cat && f.igdbContentId == null);
         if (files.length > 0) {
           slots.push({
             category: cat,

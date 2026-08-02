@@ -680,6 +680,66 @@ describe("API Routes - Additional Coverage", () => {
   });
 
   describe("Game content and manual import", () => {
+    it("keeps unmatched updates out of specific IGDB expansion slots", async () => {
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-1",
+        title: "Test Game",
+        igdbId: 100,
+      } as unknown as Game);
+      vi.mocked(storage.getGameFiles).mockResolvedValue([
+        {
+          id: "update-file",
+          gameId: "game-1",
+          category: "update",
+          originalName: "Update.nsp",
+          storedName: "Update.nsp",
+          filePath: "/library/Test Game/update/Update.nsp",
+          fileSize: 10,
+          downloadId: null,
+          igdbContentId: null,
+          createdAt: null,
+        },
+        {
+          id: "expansion-file",
+          gameId: "game-1",
+          category: "dlc",
+          originalName: "Expansion.nsp",
+          storedName: "Expansion.nsp",
+          filePath: "/library/Test Game/dlc/Expansion.nsp",
+          fileSize: 20,
+          downloadId: null,
+          igdbContentId: 200,
+          createdAt: null,
+        },
+      ] as never);
+      vi.mocked(storage.getUserGames).mockResolvedValue([]);
+      vi.mocked(igdbClient.getGameById).mockResolvedValue({
+        id: 100,
+        name: "Test Game",
+        expansions: [{ id: 200, name: "Verified Expansion" }],
+      } as never);
+
+      const res = await request(app).get("/api/games/game-1/content");
+
+      expect(res.status).toBe(200);
+      const expansionSlot = res.body.slots.find((slot: { igdbId?: number }) => slot.igdbId === 200);
+      expect(expansionSlot).toMatchObject({
+        category: "dlc",
+        igdbCategory: 2,
+        files: [expect.objectContaining({ id: "expansion-file" })],
+      });
+      const genericUpdateSlot = res.body.slots.find(
+        (slot: { label?: string }) => slot.label === "Updates & Patches"
+      );
+      expect(genericUpdateSlot.files).toEqual([
+        expect.objectContaining({ id: "update-file", igdbContentId: null }),
+      ]);
+      expect(
+        res.body.slots.find((slot: { label?: string }) => slot.label === "DLC & Expansions")
+      ).toBeUndefined();
+    });
+
     it("falls back to stored video metadata when IGDB content is unavailable", async () => {
       vi.mocked(storage.getGame).mockResolvedValue({
         id: "game-1",
