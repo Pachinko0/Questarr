@@ -72,6 +72,7 @@ export function createStorageMock() {
     updateGameUserRating: vi.fn(),
     updateGameInstalledVersion: vi.fn(),
     updateGame: vi.fn(),
+    setGameLibraryPathIfUnset: vi.fn(),
     getCollections: vi.fn().mockResolvedValue([]),
     getCollection: vi.fn(),
     createCollection: vi.fn(),
@@ -176,7 +177,9 @@ export function createStorageMock() {
     getGameFilesByDownload: vi.fn().mockResolvedValue([]),
     addGameFile: vi.fn(),
     addGameFilesBatch: vi.fn(),
+    updateGameFilePath: vi.fn(),
     updateGameFileCategory: vi.fn(),
+    updateGameFileContentId: vi.fn(),
     removeGameFile: vi.fn(),
     removeGameFilesByGameId: vi.fn(),
     getApiKeys: vi.fn().mockResolvedValue([]),
@@ -216,6 +219,7 @@ export function createIgdbMock() {
     getTimeToBeats: vi.fn().mockResolvedValue(new Map<number, TimeToBeat>()),
     batchSearchGames: vi.fn().mockResolvedValue(new Map()),
     testCredentials: vi.fn().mockResolvedValue({ success: true }),
+    clearAllCache: vi.fn().mockReturnValue(0),
   };
 }
 
@@ -263,6 +267,8 @@ export function createDbModuleMock() {
     dialect: "sqlite" as const,
     db,
     pool: {},
+    databaseStoragePath: undefined,
+    backupDatabase: vi.fn(),
     pingDatabase: async () => {
       await db.get();
     },

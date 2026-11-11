@@ -27,6 +27,19 @@ interface SyncSummary {
   notInLibrary: number;
 }
 
+interface PlatformFolderRename {
+  oldName: string;
+  newName: string;
+  merge: boolean;
+}
+
+interface MigrationScan {
+  enabled: boolean;
+  libraryRoot: string;
+  renames: PlatformFolderRename[];
+  backupSupported?: boolean;
+}
+
 const EMPTY: RommSettingsView = {
   enabled: false,
   url: "",
@@ -53,8 +66,41 @@ export function RommSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery<RommSettingsView>({ queryKey: ["/api/settings/romm"] });
+  const { data: migrationScan, isFetching: migrationScanning } = useQuery<MigrationScan>({
+    queryKey: ["/api/library/migration/scan"],
+    enabled: Boolean(data?.platformFolders),
+  });
   const [form, setForm] = useState<RommSettingsView>(EMPTY);
   const [summary, setSummary] = useState<SyncSummary | null>(null);
+  const migrationBackupSupported = migrationScan?.backupSupported !== false;
+
+  const migrate = useMutation({
+    mutationFn: async () => {
+      if (!migrationScan || migrationScan.renames.length === 0) return null;
+      const response = await apiRequest("POST", "/api/library/migration/apply", {
+        renames: migrationScan.renames,
+      });
+      return (await response.json()) as {
+        results: Array<{ success: boolean; gamesUpdated?: number; filesUpdated?: number }>;
+      };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/library/migration/scan"] });
+      const applied = result?.results.filter((entry) => entry.success) ?? [];
+      const gamesUpdated = applied.reduce((sum, entry) => sum + (entry.gamesUpdated ?? 0), 0);
+      const filesUpdated = applied.reduce((sum, entry) => sum + (entry.filesUpdated ?? 0), 0);
+      toast({
+        title: "Library folders migrated",
+        description: `${applied.length} folder(s) migrated; ${gamesUpdated} game path(s) and ${filesUpdated} file path(s) updated.`,
+      });
+    },
+    onError: async (error) =>
+      toast({
+        title: "Library migration failed",
+        description: await errorMessage(error),
+        variant: "destructive",
+      }),
+  });
 
   useEffect(() => {
     if (data) setForm({ ...EMPTY, ...data });
@@ -143,6 +189,54 @@ export function RommSettings() {
             looks for them, and Questarr can read your RomM library to mark games as owned.
           </p>
         </div>
+
+        {data?.platformFolders && (
+          <div className="space-y-3 rounded-md border p-4">
+            <div>
+              <p className="text-sm font-medium">Normalize existing platform folders</p>
+              <p className="text-xs text-muted-foreground">
+                Find older readable platform folders such as <code>SNES</code> and migrate them to
+                the RomM folder names used by new imports. Existing game and file paths are updated
+                with the folder move. Conflicting files are never overwritten.
+              </p>
+            </div>
+            {migrationScanning ? (
+              <p className="text-xs text-muted-foreground">Scanning the library root…</p>
+            ) : migrationScan?.renames.length ? (
+              <>
+                <ul className="space-y-1 text-xs text-muted-foreground">
+                  {migrationScan.renames.map((rename) => (
+                    <li key={`${rename.oldName}-${rename.newName}`}>
+                      <code>{rename.oldName}</code> → <code>{rename.newName}</code>
+                      {rename.merge ? " (merge)" : ""}
+                    </li>
+                  ))}
+                </ul>
+                <Button
+                  variant="outline"
+                  onClick={() => migrate.mutate()}
+                  disabled={!migrationBackupSupported || migrate.isPending}
+                  title={
+                    migrationBackupSupported
+                      ? undefined
+                      : "Library migration requires the SQLite backup backend"
+                  }
+                >
+                  {migrate.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Migrate folders
+                </Button>
+                {!migrationBackupSupported && (
+                  <p className="text-xs text-muted-foreground">
+                    Folder migration is unavailable for this database backend because it requires a
+                    consistent pre-migration backup.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">No legacy platform folders found.</p>
+            )}
+          </div>
+        )}
 
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-0.5">

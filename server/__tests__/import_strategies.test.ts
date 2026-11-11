@@ -500,6 +500,10 @@ describe("ImportStrategies", () => {
       // modeUsed reflects the requested batch mode, not just the last file's
       // fallback; the per-file fallback is still visible in conflictsResolved.
       expect(result.modeUsed).toBe("hardlink");
+      expect(result.placedFileCategories).toEqual([
+        { name: "game.exe", category: "main" },
+        { name: "Game DLC Pack.nsp", category: "dlc" },
+      ]);
       expect(result.conflictsResolved).toEqual(["Game DLC Pack.nsp (mode fallback: copy)"]);
       expect(await fs.pathExists(path.join(destination, "dlc", "Game DLC Pack.nsp"))).toBe(true);
 

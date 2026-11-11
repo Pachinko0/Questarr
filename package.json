@@ -21,6 +21,7 @@
     "secretlint": "secretlint --maskSecrets \"**/*\"",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx server/run-migrations.ts",
+    "db:repair-library-path": "tsx scripts/repair-library-path.ts",
     "db:push": "drizzle-kit push",
     "db:generate:pg": "drizzle-kit generate --config=drizzle.config.pg.ts",
     "db:push:pg": "drizzle-kit push --config=drizzle.config.pg.ts",

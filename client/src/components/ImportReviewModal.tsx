@@ -26,6 +26,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import { FileBrowser } from "./FileBrowser";
 
+type ImportFileCategory = "main" | "dlc" | "update" | "extra" | "packs";
+
 interface ImportReviewModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,6 +64,7 @@ export default function ImportReviewModal({
   const unpackArchive =
     passwordRequired || (unpackArchiveOverride ?? importConfig?.autoUnpack ?? false);
   const [password, setPassword] = useState("");
+  const [fileCategories, setFileCategories] = useState<Record<string, ImportFileCategory>>({});
   const [isSourceBrowserOpen, setIsSourceBrowserOpen] = useState(false);
   const [isDestBrowserOpen, setIsDestBrowserOpen] = useState(false);
 
@@ -74,9 +77,20 @@ export default function ImportReviewModal({
   const { data: planData } = useQuery<{
     originalPath: string;
     proposedPath: string;
-    files: Array<{ name: string; isArchive: boolean }>;
+    files: Array<{
+      name: string;
+      isArchive: boolean;
+      category?: ImportFileCategory;
+      suggestedContentId?: number;
+      suggestedContentName?: string;
+    }>;
     hasArchive: boolean;
     totalCount: number;
+    suggestedContent: {
+      id: number;
+      name: string;
+      category: "dlc" | "update" | "packs" | "extra";
+    } | null;
   }>({
     queryKey: [planUrl],
     enabled: open,
@@ -93,6 +107,7 @@ export default function ImportReviewModal({
       setDestinationPath(importConfig?.libraryRoot ?? "");
       setTransferMode(importConfig?.transferMode ?? "move");
       setPassword("");
+      setFileCategories({});
     }
   }, [open, downloadId, importConfig?.libraryRoot, importConfig?.transferMode, passwordRequired]);
 
@@ -106,6 +121,11 @@ export default function ImportReviewModal({
       planApplied.current = true;
       if (planData.originalPath) setSourcePath(planData.originalPath);
       if (planData.proposedPath) setDestinationPath(planData.proposedPath);
+      const categories: Record<string, ImportFileCategory> = {};
+      for (const file of planData.files) {
+        categories[file.name] = file.category ?? "main";
+      }
+      setFileCategories(categories);
     }
   }, [open, planData]);
 
@@ -132,6 +152,25 @@ export default function ImportReviewModal({
         transferMode,
         unpack: unpackArchive,
         ...(unpackArchive && password ? { password } : {}),
+        ...(planData?.files?.length
+          ? {
+              fileCategories: planData.files.map((file) => {
+                const category = fileCategories[file.name] ?? file.category ?? "main";
+                const suggestedCategory = planData.suggestedContent?.category;
+                const suggestionMatches =
+                  file.suggestedContentId != null &&
+                  suggestedCategory != null &&
+                  ((suggestedCategory === "update" && category === "update") ||
+                    (suggestedCategory !== "update" &&
+                      (category === "dlc" || category === "packs")));
+                return {
+                  name: file.name,
+                  category,
+                  ...(suggestionMatches ? { igdbContentId: file.suggestedContentId } : {}),
+                };
+              }),
+            }
+          : {}),
       });
     },
     onSuccess: () => {
@@ -253,20 +292,53 @@ export default function ImportReviewModal({
             {planData?.files && planData.files.length > 0 && (
               <div className="space-y-1.5">
                 <Label>Download Contents</Label>
+                {planData.suggestedContent && (
+                  <p className="text-xs text-muted-foreground">
+                    IGDB match:{" "}
+                    <span className="font-medium">{planData.suggestedContent.name}</span>{" "}
+                    <span className="capitalize">({planData.suggestedContent.category})</span>
+                  </p>
+                )}
                 <ScrollArea className="h-32 rounded-md border p-2">
                   <div className="space-y-0.5">
-                    {planData.files.map((f) => (
-                      <div key={f.name} className="flex items-center gap-1.5 text-xs">
-                        {f.isArchive ? (
-                          <Package className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-                        ) : (
-                          <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className={f.isArchive ? "text-amber-400" : "text-muted-foreground"}>
-                          {f.name}
-                        </span>
-                      </div>
-                    ))}
+                    {planData.files.map((f) => {
+                      const category = fileCategories[f.name] ?? f.category ?? "main";
+                      return (
+                        <div key={f.name} className="flex items-center gap-1.5 text-xs">
+                          {f.isArchive ? (
+                            <Package className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                          ) : (
+                            <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          )}
+                          <span
+                            className={f.isArchive ? "text-amber-400" : "text-muted-foreground"}
+                          >
+                            {f.name}
+                          </span>
+                          <Select
+                            value={category}
+                            onValueChange={(value) =>
+                              setFileCategories((previous) => ({
+                                ...previous,
+                                [f.name]: value as ImportFileCategory,
+                              }))
+                            }
+                            disabled={unpackArchive}
+                          >
+                            <SelectTrigger className="ml-auto h-7 w-28 text-[11px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="main">Main</SelectItem>
+                              <SelectItem value="dlc">DLC</SelectItem>
+                              <SelectItem value="update">Update</SelectItem>
+                              <SelectItem value="packs">Packs</SelectItem>
+                              <SelectItem value="extra">Extra</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
                     {planData.totalCount > planData.files.length && (
                       <p className="text-xs text-muted-foreground pt-0.5">
                         …and {planData.totalCount - planData.files.length} more file

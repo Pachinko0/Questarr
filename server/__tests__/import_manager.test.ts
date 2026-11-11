@@ -24,7 +24,11 @@ vi.mock("../downloaders.js", () => ({
   DownloaderManager: downloadersMock,
 }));
 
-import { ImportManager, IncompleteScanError } from "../services/ImportManager.js";
+import {
+  findImportContentMatch,
+  ImportManager,
+  IncompleteScanError,
+} from "../services/ImportManager.js";
 import { makeGame, makeImportConfig } from "./helpers/import-test-helpers.js";
 
 describe("ImportManager", () => {
@@ -36,6 +40,14 @@ describe("ImportManager", () => {
     updateGameDownloadStatus: vi.fn(),
     updateGameStatus: vi.fn(),
     updateGame: vi.fn(),
+    setGameLibraryPathIfUnset: vi.fn(),
+    getGameFiles: vi.fn().mockResolvedValue([]),
+    addGameFile: vi.fn().mockImplementation(async (file) => ({
+      id: "gf-test",
+      ...file,
+      igdbContentId: file.igdbContentId ?? null,
+    })),
+    updateGameFileContentId: vi.fn(),
     replaceGameInstalledVersion: vi.fn(),
     addNotification: vi.fn().mockResolvedValue(undefined),
     getUserSettings: vi.fn().mockResolvedValue(undefined),
@@ -1913,5 +1925,28 @@ describe("ImportManager", () => {
         )
       ).toBe(false);
     });
+  });
+});
+
+describe("findImportContentMatch", () => {
+  const items = [
+    { id: 1, name: "Verified Expansion", category: "dlc" as const },
+    { id: 2, name: "Official Update", category: "update" as const },
+  ];
+
+  it("matches an expansion only for a DLC-like release", () => {
+    expect(findImportContentMatch("Game - Verified Expansion DLC", items)).toEqual(items[0]);
+  });
+
+  it("matches an update only for an update-like release", () => {
+    expect(findImportContentMatch("Game Official Update v1.2", items)).toEqual(items[1]);
+  });
+
+  it("does not attach a generic update to an expansion", () => {
+    expect(findImportContentMatch("Game Update v1.2", [items[0]])).toBeNull();
+  });
+
+  it("does not invent a content match for a main-game release", () => {
+    expect(findImportContentMatch("Game Complete Edition", items)).toBeNull();
   });
 });

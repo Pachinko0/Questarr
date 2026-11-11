@@ -39,6 +39,7 @@ describe("FileBrowser", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
   });
 
   it("does not fetch when closed", () => {
@@ -152,6 +153,109 @@ describe("FileBrowser", () => {
 
     expect(onSelect).toHaveBeenCalledWith("/data");
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("remembers the selected directory and offers it on the next open", async () => {
+    const onSelect = vi.fn();
+    mockApiRequest.mockResolvedValue(makeResponse(makeDirData()));
+
+    const { rerender } = render(
+      <FileBrowser {...defaultProps} root="/" onSelect={onSelect} open={true} />
+    );
+    await screen.findByRole("button", { name: "games" });
+
+    fireEvent.click(screen.getByRole("button", { name: /select current/i }));
+    expect(onSelect).toHaveBeenCalledWith("/data");
+
+    rerender(<FileBrowser {...defaultProps} root="/" open={false} />);
+    rerender(<FileBrowser {...defaultProps} root="/" open={true} />);
+
+    await waitFor(() => {
+      expect(mockApiRequest).toHaveBeenLastCalledWith(
+        "GET",
+        expect.stringContaining(encodeURIComponent("/data"))
+      );
+    });
+    expect(screen.getByRole("button", { name: "data" })).toBeInTheDocument();
+  });
+
+  it("restores the legacy last-path key used by the old fork", async () => {
+    window.localStorage.setItem("fileBrowserLastPath", "/legacy");
+    mockApiRequest.mockResolvedValue(makeResponse(makeDirData({ path: "/legacy" })));
+
+    render(<FileBrowser {...defaultProps} root="/" initialPath="/data" />);
+
+    await waitFor(() => {
+      expect(mockApiRequest).toHaveBeenCalledWith(
+        "GET",
+        expect.stringContaining(encodeURIComponent("/legacy"))
+      );
+    });
+  });
+
+  it("ignores malformed recent-path storage", async () => {
+    window.localStorage.setItem("fileBrowserRecentPaths", "{not-json}");
+    mockApiRequest.mockResolvedValue(makeResponse(makeDirData()));
+
+    render(<FileBrowser {...defaultProps} root="/" />);
+
+    await screen.findByRole("button", { name: "games" });
+    expect(screen.queryByRole("button", { name: "data" })).not.toBeInTheDocument();
+  });
+
+  it("supports selecting a file in file mode", async () => {
+    const onSelect = vi.fn();
+    mockApiRequest.mockResolvedValue(makeResponse(makeDirData()));
+
+    render(<FileBrowser {...defaultProps} mode="file" onSelect={onSelect} title="Select File" />);
+
+    await screen.findByRole("button", { name: "readme.txt" });
+    fireEvent.click(screen.getByRole("button", { name: "readme.txt" }));
+    fireEvent.click(screen.getByRole("button", { name: /select file/i }));
+
+    expect(onSelect).toHaveBeenCalledWith("/data/readme.txt");
+  });
+
+  it("supports selecting multiple files without changing the folder selection", async () => {
+    const onSelect = vi.fn();
+    const onMultiSelect = vi.fn();
+    mockApiRequest.mockResolvedValue(
+      makeResponse(
+        makeDirData({
+          items: [
+            { name: "one.bin", path: "/data/one.bin", isDirectory: false, size: 1 },
+            { name: "two.bin", path: "/data/two.bin", isDirectory: false, size: 2 },
+          ],
+        })
+      )
+    );
+
+    render(
+      <FileBrowser {...defaultProps} multiple onSelect={onSelect} onMultiSelect={onMultiSelect} />
+    );
+
+    await screen.findByRole("checkbox", { name: "Select one.bin" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select one.bin" }));
+    fireEvent.click(screen.getByRole("button", { name: /select 1 file/i }));
+
+    expect(onMultiSelect).toHaveBeenCalledWith(["/data/one.bin"]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("navigates using a shortcut and the root button", async () => {
+    mockApiRequest
+      .mockResolvedValueOnce(makeResponse(makeDirData()))
+      .mockResolvedValueOnce(makeResponse(makeDirData({ path: "/games", parent: "/" })))
+      .mockResolvedValueOnce(makeResponse(makeDirData({ path: "/", parent: "", items: [] })));
+
+    render(<FileBrowser {...defaultProps} shortcuts={[{ label: "Games", path: "/games" }]} />);
+
+    await screen.findByRole("button", { name: "games" });
+    fireEvent.click(screen.getByRole("button", { name: "Games" }));
+    await waitFor(() => expect(mockApiRequest).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /navigate to root/i }));
+    await waitFor(() => expect(mockApiRequest).toHaveBeenCalledTimes(3));
   });
 
   it("calls onOpenChange(false) when Cancel is clicked", async () => {

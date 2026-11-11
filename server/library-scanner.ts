@@ -31,8 +31,15 @@ import {
 import { categorizeDownload } from "../shared/download-categorizer.js";
 import { igdbLogger, routesLogger } from "./logger.js";
 import { notifyUser } from "./socket.js";
-import type { InsertGame, InsertGameFile, GameFile, GameFileCategory } from "../shared/schema.js";
+import type {
+  Game,
+  InsertGame,
+  InsertGameFile,
+  GameFile,
+  GameFileCategory,
+} from "../shared/schema.js";
 import { isUserCuratedGameStatus } from "../shared/schema.js";
+import { assessLibraryTarget } from "./library-path.js";
 
 // ---------- Types ----------
 
@@ -454,6 +461,64 @@ async function assignFilesToGame(
   return added;
 }
 
+/**
+ * Backfill file records for a game already inside the configured library.
+ *
+ * This is intentionally separate from the external root-folder scanner: it
+ * never creates games, never assigns IGDB content ids, and only records regular
+ * files under the game's own library target. Existing records are preserved and
+ * only missing paths are added.
+ */
+export async function backfillGameFilesForGame(
+  game: Pick<Game, "id" | "libraryPath">,
+  libraryRoot: string
+): Promise<number> {
+  if (!game.libraryPath) return 0;
+
+  const safety = assessLibraryTarget(libraryRoot, game.libraryPath);
+  if (!safety.safe) return 0;
+
+  const rootRealPath = await fs.promises.realpath(path.resolve(libraryRoot)).catch(() => null);
+  const targetRealPath = await fs.promises.realpath(safety.resolvedTarget).catch(() => null);
+  if (!rootRealPath || !targetRealPath || !isStrictlyInside(rootRealPath, targetRealPath)) {
+    return 0;
+  }
+
+  const targetStat = await fs.promises.stat(targetRealPath).catch(() => null);
+  if (!targetStat) return 0;
+
+  const files = targetStat.isFile()
+    ? isIgnoredFile(path.basename(targetRealPath))
+      ? []
+      : [{ absolutePath: targetRealPath, size: targetStat.size }]
+    : targetStat.isDirectory()
+      ? await listFiles(targetRealPath)
+      : [];
+  if (files.length === 0) return 0;
+
+  const existingPaths = new Set((await storage.getGameFiles(game.id)).map((file) => file.filePath));
+  const inserts: InsertGameFile[] = [];
+  for (const file of files) {
+    const filePath = path.resolve(file.absolutePath);
+    if (existingPaths.has(filePath)) continue;
+    const name = path.basename(filePath);
+    const parentDir = path.basename(path.dirname(filePath)).toLowerCase();
+    inserts.push({
+      gameId: game.id,
+      downloadId: null,
+      originalName: name,
+      storedName: name,
+      category: categorizeFile(name, parentDir),
+      filePath,
+      fileSize: file.size,
+    });
+  }
+
+  if (inserts.length === 0) return 0;
+  await storage.addGameFilesBatch(inserts);
+  return inserts.length;
+}
+
 // ---------- Public API ----------
 
 /**
@@ -471,12 +536,22 @@ export async function replaceGameFilesFromPath(
   // Categories the user set by hand are kept, matched by path relative to the old location.
   const overrides = new Map<string, GameFile["category"]>();
   const nameOverrides = new Map<string, GameFile["category"] | undefined>();
+  // Explicit IGDB associations are identity data too. Keep them when a game
+  // folder is moved/rebuilt; otherwise a later library move silently turns a
+  // verified expansion/update link back into an unrelated generic file.
+  const contentOverrides = new Map<string, number | null | undefined>();
+  const contentNameOverrides = new Map<string, number | null | undefined>();
   for (const file of await storage.getGameFiles(gameId)) {
     const filePath = path.resolve(file.filePath);
     if (filePath === previous || isStrictlyInside(previous, filePath)) {
+      contentOverrides.set(path.relative(previous, filePath), file.igdbContentId ?? null);
+      const name = path.basename(filePath);
+      contentNameOverrides.set(
+        name,
+        contentNameOverrides.has(name) ? undefined : (file.igdbContentId ?? null)
+      );
       if (file.categoryOverridden) {
         overrides.set(path.relative(previous, filePath), file.category);
-        const name = path.basename(filePath);
         // A name shared by several overridden files is ambiguous: drop it.
         nameOverrides.set(name, nameOverrides.has(name) ? undefined : file.category);
       }
@@ -488,7 +563,7 @@ export async function replaceGameFilesFromPath(
     ? [{ absolutePath, size: stat.size }]
     : await listFiles(absolutePath, Number.POSITIVE_INFINITY);
   const added = await assignFilesToGame(gameId, files);
-  if (overrides.size > 0) {
+  if (overrides.size > 0 || contentOverrides.size > 0) {
     const destination = path.resolve(absolutePath);
     const inside = (await storage.getGameFiles(gameId)).filter((file) => {
       const filePath = path.resolve(file.filePath);
@@ -507,6 +582,15 @@ export async function replaceGameFilesFromPath(
       const category =
         overrides.get(relative) ?? (byName.get(name) === 1 ? nameOverrides.get(name) : undefined);
       if (category) await storage.updateGameFileCategory(file.id, category);
+
+      const contentId = contentOverrides.has(relative)
+        ? contentOverrides.get(relative)
+        : byName.get(name) === 1
+          ? contentNameOverrides.get(name)
+          : undefined;
+      if (contentId !== undefined && contentId !== null) {
+        await storage.updateGameFileContentId(file.id, contentId);
+      }
     }
   }
   return added;

@@ -46,6 +46,11 @@ vi.mock("@/components/ClaimBatchModal", () => ({
     open ? <div data-testid="claim-batch-modal">Claim batch modal</div> : null,
 }));
 
+vi.mock("@/components/ManualImportModal", () => ({
+  default: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="manual-import-modal">Manual import modal</div> : null,
+}));
+
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -109,6 +114,14 @@ describe("Downloads page", () => {
     await waitFor(() => {
       expect(screen.getByTestId("claim-batch-modal")).toBeInTheDocument();
     });
+  });
+
+  it("opens standalone manual import from the Downloads header", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId("button-manual-import"));
+
+    expect(await screen.findByTestId("manual-import-modal")).toBeInTheDocument();
   });
 
   it("filters downloads by search and Questarr-only toggle while showing the category banner", async () => {

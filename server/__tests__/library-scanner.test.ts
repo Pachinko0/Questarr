@@ -14,6 +14,7 @@ import {
   scanAllEnabledRootFolders,
   getScanProgress,
   getAllUnmatched,
+  backfillGameFilesForGame,
 } from "../library-scanner.js";
 import type { RootFolder, Game } from "../../shared/schema.js";
 
@@ -45,6 +46,7 @@ vi.mock("../storage.js", () => ({
     updateGameStatus: vi.fn(),
     getGameFiles: vi.fn().mockResolvedValue([]),
     addGameFile: vi.fn(),
+    addGameFilesBatch: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -97,6 +99,52 @@ describe("library-scanner isIgnoredFile", () => {
     expect(isIgnoredFile("setup.exe")).toBe(false);
     expect(isIgnoredFile("game.iso")).toBe(false);
     expect(isIgnoredFile("game.zip")).toBe(false);
+  });
+});
+
+describe("backfillGameFilesForGame", () => {
+  it("records files only, preserves generic categories, and skips unsafe targets", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "questarr-backfill-"));
+    const gameDir = path.join(root, "snes", "Hades");
+    await fs.promises.mkdir(path.join(gameDir, "update"), { recursive: true });
+    await fs.promises.writeFile(path.join(gameDir, "Hades.sfc"), "base");
+    await fs.promises.writeFile(path.join(gameDir, "update", "patch.nsp"), "update");
+
+    const { storage } = await import("../storage.js");
+    vi.mocked(storage.getGameFiles).mockResolvedValue([]);
+    const addBatch = vi.mocked(storage.addGameFilesBatch);
+    addBatch.mockResolvedValue([]);
+
+    await expect(
+      backfillGameFilesForGame({ id: "game-1", libraryPath: gameDir }, root)
+    ).resolves.toBe(2);
+    expect(addBatch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          filePath: expect.stringContaining(`${path.sep}snes${path.sep}Hades${path.sep}Hades.sfc`),
+          category: "main",
+        }),
+        expect.objectContaining({
+          filePath: expect.stringContaining(
+            `${path.sep}snes${path.sep}Hades${path.sep}update${path.sep}patch.nsp`
+          ),
+          category: "update",
+        }),
+      ])
+    );
+    expect(addBatch.mock.calls[0]?.[0]).toHaveLength(2);
+
+    await expect(
+      backfillGameFilesForGame({ id: "game-2", libraryPath: path.join(root, "snes") }, root)
+    ).resolves.toBe(0);
+    await expect(
+      backfillGameFilesForGame(
+        { id: "game-3", libraryPath: path.join(root, "..", "outside") },
+        root
+      )
+    ).resolves.toBe(0);
+
+    await fs.promises.rm(root, { recursive: true, force: true });
   });
 });
 

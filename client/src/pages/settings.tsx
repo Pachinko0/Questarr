@@ -964,9 +964,53 @@ export default function SettingsPage() {
     },
   });
 
+  const databaseBackupMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/library/backup");
+      return (await res.json()) as { backupPath: string };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Database backup created",
+        description: data.backupPath,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Database backup failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const databaseBackupSupported = config?.database?.backupSupported !== false;
+
+  const clearIgdbCacheMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/igdb/clear-cache");
+      return (await res.json()) as { cleared: number };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "IGDB cache cleared",
+        description: `${data.cleared} cached entr${data.cleared === 1 ? "y" : "ies"} cleared.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to clear IGDB cache",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const [libraryHealthResult, setLibraryHealthResult] = useState<{
     drifted: Array<{ id: string; title: string; libraryPath: string }>;
     orphaned: Array<{ path: string }>;
+    backfilledGames: number;
+    backfilledFiles: number;
   } | null>(null);
 
   const libraryHealthMutation = useMutation({
@@ -975,13 +1019,15 @@ export default function SettingsPage() {
       return res.json();
     },
     onSuccess: (data) => {
-      setLibraryHealthResult({ drifted: data.drifted, orphaned: data.orphaned });
+      setLibraryHealthResult({
+        drifted: data.drifted,
+        orphaned: data.orphaned,
+        backfilledGames: data.backfilledGames ?? 0,
+        backfilledFiles: data.backfilledFiles ?? 0,
+      });
       toast({
         title: "Library Health Check",
-        description:
-          data.drifted.length === 0 && data.orphaned.length === 0
-            ? "Library is in sync."
-            : `${data.drifted.length} drifted, ${data.orphaned.length} orphaned`,
+        description: `${data.drifted.length} drifted, ${data.orphaned.length} orphaned, ${data.backfilledFiles ?? 0} file(s) backfilled`,
       });
     },
     onError: (error: Error) => {
@@ -2434,6 +2480,57 @@ export default function SettingsPage() {
                 <div className="flex flex-col space-y-2">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
+                      <p className="text-sm font-medium">Back Up Database</p>
+                      <p className="text-xs text-muted-foreground">
+                        {databaseBackupSupported
+                          ? "Create a consistent SQLite backup before maintenance or other filesystem changes."
+                          : "Backups are not available for the configured database backend."}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => databaseBackupMutation.mutate()}
+                      disabled={!databaseBackupSupported || databaseBackupMutation.isPending}
+                      className="gap-2 w-full sm:w-auto shrink-0"
+                    >
+                      {databaseBackupMutation.isPending ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Archive className="h-4 w-4" />
+                      )}
+                      Back Up Database
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Refresh IGDB Data</p>
+                      <p className="text-xs text-muted-foreground">
+                        Clear cached IGDB responses so the next lookup fetches fresh metadata,
+                        expansions, and DLC.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => clearIgdbCacheMutation.mutate()}
+                      disabled={clearIgdbCacheMutation.isPending}
+                      className="gap-2 w-full sm:w-auto shrink-0"
+                    >
+                      {clearIgdbCacheMutation.isPending ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                      Clear IGDB Cache
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
                       <p className="text-sm font-medium">Clear Downloads Cache</p>
                       <p className="text-xs text-muted-foreground">
                         Clear cached torrent/NZB search results so the next search fetches fresh
@@ -2508,7 +2605,8 @@ export default function SettingsPage() {
                   </div>
                   {libraryHealthResult &&
                     (libraryHealthResult.drifted.length > 0 ||
-                      libraryHealthResult.orphaned.length > 0) && (
+                      libraryHealthResult.orphaned.length > 0 ||
+                      libraryHealthResult.backfilledFiles > 0) && (
                       <div className="mt-2 space-y-3 rounded-md border border-border p-3 text-xs">
                         {libraryHealthResult.drifted.length > 0 && (
                           <div>
@@ -2534,6 +2632,15 @@ export default function SettingsPage() {
                                 <li key={o.path}>{o.path}</li>
                               ))}
                             </ul>
+                          </div>
+                        )}
+                        {libraryHealthResult.backfilledFiles > 0 && (
+                          <div>
+                            <p className="font-medium text-emerald-500">Backfilled</p>
+                            <p className="mt-1 text-muted-foreground">
+                              {libraryHealthResult.backfilledFiles} file(s) added across{" "}
+                              {libraryHealthResult.backfilledGames} game(s).
+                            </p>
                           </div>
                         )}
                       </div>

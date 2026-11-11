@@ -638,6 +638,15 @@ importRouter.post("/:id/confirm", async (req, res) => {
       originalPath: z.string().optional(),
       transferMode: z.enum(IMPORT_TRANSFER_MODES).optional(),
       unpack: z.boolean().optional(),
+      fileCategories: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            category: z.enum(["main", "dlc", "update", "extra", "packs"]),
+            igdbContentId: z.number().int().positive().optional(),
+          })
+        )
+        .optional(),
       // Only meaningful when unpack is true and the archive is encrypted. Never persisted —
       // consumed once by confirmImport() to try extraction, then dropped. A NUL byte would
       // reach execFile's args array unchanged and throw ERR_INVALID_ARG_VALUE deep inside
@@ -665,6 +674,7 @@ importRouter.post("/:id/confirm", async (req, res) => {
         transferMode: body.transferMode,
         unpack: body.unpack,
         password: body.password,
+        fileCategories: body.fileCategories,
       },
       userId
     );

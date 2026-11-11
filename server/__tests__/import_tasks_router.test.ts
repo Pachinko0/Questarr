@@ -7,6 +7,7 @@ const { mockStorage } = vi.hoisted(() => ({
     getImportTasks: vi.fn(),
     getImportTask: vi.fn(),
     getImportTaskItems: vi.fn(),
+    getGameFilesByGameIds: vi.fn().mockResolvedValue(new Map()),
   },
 }));
 
@@ -94,6 +95,33 @@ describe("importTasksRouter GET /:id", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ...task, items });
+    expect(mockStorage.getGameFilesByGameIds).toHaveBeenCalledWith([]);
+  });
+
+  it("enriches items with files created for their games", async () => {
+    const task = makeTask();
+    const items = [
+      { id: "item-1", taskId: "task-1", gameId: "game-1", result: "added" },
+      { id: "item-2", taskId: "task-1", gameId: null, result: "failed" },
+    ];
+    const gameFile = {
+      id: "file-1",
+      gameId: "game-1",
+      filePath: "/library/Game/game.iso",
+      category: "main",
+    };
+    mockStorage.getImportTask.mockResolvedValue(task);
+    mockStorage.getImportTaskItems.mockResolvedValue(items);
+    mockStorage.getGameFilesByGameIds.mockResolvedValue(new Map([["game-1", [gameFile]]]));
+
+    const res = await request(createApp()).get("/api/import-tasks/task-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([
+      { ...items[0], gameFiles: [gameFile] },
+      { ...items[1], gameFiles: [] },
+    ]);
+    expect(mockStorage.getGameFilesByGameIds).toHaveBeenCalledWith(["game-1"]);
   });
 
   it("returns 404 when task does not exist", async () => {
