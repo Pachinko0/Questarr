@@ -58,6 +58,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import DownloadDetailsModal from "@/components/DownloadDetailsModal";
+const ManualImportModal = lazy(() => import("@/components/ManualImportModal"));
 const ClaimDownloadModal = lazy(() => import("@/components/ClaimDownloadModal"));
 const ClaimBatchModal = lazy(() => import("@/components/ClaimBatchModal"));
 
@@ -138,6 +139,7 @@ export default function Downloads() {
   const [searchQuery, setSearchQuery] = useState("");
   const [claimTarget, setClaimTarget] = useState<DownloadStatus | null>(null);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [manualImportOpen, setManualImportOpen] = useState(false);
 
   const {
     data: downloadsData,
@@ -412,16 +414,27 @@ export default function Downloads() {
             Monitor and manage active downloads
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => refetch()}
-          data-testid="button-refresh"
-          aria-label="Refresh downloads"
-        >
-          <RefreshCw className="h-4 w-4 md:mr-2" />
-          <span className="hidden md:inline">Refresh</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setManualImportOpen(true)}
+            data-testid="button-manual-import"
+          >
+            <Download className="h-4 w-4 md:mr-2" />
+            <span className="hidden md:inline">Manual Import</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            data-testid="button-refresh"
+            aria-label="Refresh downloads"
+          >
+            <RefreshCw className="h-4 w-4 md:mr-2" />
+            <span className="hidden md:inline">Refresh</span>
+          </Button>
+        </div>
       </div>
 
       {/* Per-downloader summary */}
@@ -983,6 +996,10 @@ export default function Downloads() {
       {/* Batch Scan Modal */}
       <Suspense fallback={<div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />}>
         <ClaimBatchModal open={batchModalOpen} onOpenChange={setBatchModalOpen} />
+      </Suspense>
+
+      <Suspense fallback={<div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />}>
+        <ManualImportModal open={manualImportOpen} onOpenChange={setManualImportOpen} />
       </Suspense>
     </div>
   );

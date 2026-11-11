@@ -46,6 +46,15 @@ function makeStorage() {
     updateGameDownloadStatus: vi.fn(),
     updateGameStatus: vi.fn(),
     updateGame: vi.fn(),
+    setGameLibraryPathIfUnset: vi.fn(),
+    getEnabledRootFolders: vi.fn().mockResolvedValue([]),
+    getGameFiles: vi.fn().mockResolvedValue([]),
+    addGameFile: vi.fn().mockImplementation(async (file) => ({
+      id: "gf-test",
+      ...file,
+      igdbContentId: file.igdbContentId ?? null,
+    })),
+    updateGameFileContentId: vi.fn(),
     addNotification: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -79,6 +88,115 @@ function makeManager(
     archiveService as never // NOSONAR
   );
 }
+
+describe("ImportManager - manualImportFile", () => {
+  beforeEach(() => {
+    fsMock.stat.mockResolvedValue({ isFile: () => true, size: 12 });
+    fsMock.pathExists.mockResolvedValue(false);
+  });
+
+  it("forces move mode when importing into an existing target directory", async () => {
+    const storage = makeStorage();
+    storage.getImportConfig.mockResolvedValue(makeImportConfig({ libraryRoot: "/library" }));
+    const manager = makeManager(storage);
+    const executeSpy = vi.spyOn(PCImportStrategy.prototype, "executeImport").mockResolvedValue({
+      destDir: "/library/PC/Test Game/update",
+      filesPlaced: ["/library/PC/Test Game/update/update.bin"],
+      modeUsed: "move",
+      conflictsResolved: [],
+    });
+
+    try {
+      const result = await manager.manualImportFile(
+        "/downloads/update.bin",
+        {
+          id: "g1",
+          userId: "u1",
+          title: "Test Game",
+          libraryPath: "/library/PC/Test Game",
+        } as never,
+        {
+          category: "update",
+          targetDir: "/library/PC/Test Game",
+          transferMode: "copy",
+        }
+      );
+
+      expect(executeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          originalPath: "/downloads/update.bin",
+          proposedPath: "/library/PC/Test Game/update/update.bin",
+        }),
+        "move"
+      );
+      expect(result.modeUsed).toBe("move");
+    } finally {
+      executeSpy.mockRestore();
+    }
+  });
+
+  it("forces move mode for Scan Disk even when the configured mode is copy", async () => {
+    const storage = makeStorage();
+    storage.getImportConfig.mockResolvedValue(
+      makeImportConfig({ libraryRoot: "/library", transferMode: "copy" })
+    );
+    const manager = makeManager(storage);
+    const executeSpy = vi.spyOn(PCImportStrategy.prototype, "executeImport").mockResolvedValue({
+      destDir: "/library/PC/Test Game/update",
+      filesPlaced: ["/library/PC/Test Game/update/update.bin"],
+      modeUsed: "move",
+      conflictsResolved: [],
+    });
+
+    try {
+      await manager.manualImportFile(
+        "/library/PC/Test Game/update.bin",
+        {
+          id: "g1",
+          userId: "u1",
+          title: "Test Game",
+          libraryPath: "/library/PC/Test Game",
+        } as never,
+        { category: "update", scanDisk: true }
+      );
+
+      expect(executeSpy).toHaveBeenCalledWith(expect.anything(), "move");
+    } finally {
+      executeSpy.mockRestore();
+    }
+  });
+});
+
+describe("ImportManager - library path ownership", () => {
+  it("persists the first import target and updates the reused game object", async () => {
+    const storage = makeStorage();
+    const persisted = { id: "g1", libraryPath: path.resolve("/library/PC/Test Game") };
+    storage.setGameLibraryPathIfUnset.mockResolvedValue(persisted);
+    const manager = makeManager(storage);
+    const game = { id: "g1", libraryPath: null } as never;
+
+    await manager.setLibraryPathOnce(game, "/library/PC/Test Game");
+
+    expect(storage.setGameLibraryPathIfUnset).toHaveBeenCalledWith(
+      "g1",
+      path.resolve("/library/PC/Test Game")
+    );
+    expect(game.libraryPath).toBe(path.resolve("/library/PC/Test Game"));
+  });
+
+  it("does not replace a path already persisted by another import", async () => {
+    const storage = makeStorage();
+    storage.setGameLibraryPathIfUnset.mockResolvedValue(undefined);
+    storage.getGame.mockResolvedValue({ id: "g1", libraryPath: "/library/PC/First Game" });
+    const manager = makeManager(storage);
+    const game = { id: "g1", libraryPath: null } as never;
+
+    await manager.setLibraryPathOnce(game, "/library/PC/Second Game");
+
+    expect(game.libraryPath).toBe("/library/PC/First Game");
+    expect(storage.updateGame).not.toHaveBeenCalled();
+  });
+});
 
 // ─── planConfirmImport ────────────────────────────────────────────────────────
 

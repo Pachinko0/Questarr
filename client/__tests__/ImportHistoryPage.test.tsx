@@ -136,7 +136,14 @@ describe("ImportHistoryPage", () => {
     const taskWithItems = {
       ...task,
       items: [
-        { id: "i1", itemName: "Game 1", result: "added", errorMessage: null, gameTitle: "Game 1" },
+        {
+          id: "i1",
+          itemName: "Game 1",
+          result: "added",
+          errorMessage: null,
+          gameTitle: "Game 1",
+          gameFiles: [],
+        },
       ],
     };
 
@@ -212,6 +219,14 @@ describe("ImportHistoryPage", () => {
           result: "added",
           errorMessage: null,
           gameTitle: "Half-Life 3",
+          gameFiles: [
+            {
+              id: "file-1",
+              gameId: "game-1",
+              filePath: "/library/Half-Life 3/game.iso",
+              category: "main",
+            },
+          ],
         },
         {
           id: "i2",
@@ -219,6 +234,7 @@ describe("ImportHistoryPage", () => {
           result: "failed",
           errorMessage: "No match",
           gameTitle: null,
+          gameFiles: [],
         },
       ],
     };
@@ -238,6 +254,7 @@ describe("ImportHistoryPage", () => {
     await waitFor(() => screen.getByText("Half-Life 3"));
     expect(screen.getByText("Steam App 102")).toBeInTheDocument();
     expect(screen.getByText("No match")).toBeInTheDocument();
+    expect(screen.getByText("1 file")).toBeInTheDocument();
   });
 
   it("handles null timestamps gracefully", async () => {
