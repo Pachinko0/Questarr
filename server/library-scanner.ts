@@ -314,6 +314,40 @@ async function matchByIdTag(folderName: string): Promise<IGDBGame | null> {
   }
 }
 
+/**
+ * A typed search is a title, not a release name: only id tags and a bracketed year go, so a
+ * trailing "-Men" or "-Life" is not mistaken for a release group.
+ */
+function typedTitle(query: string): string {
+  const stripped = query
+    .replace(/[{[(]\s*(?:igdb|steam)[-:= ]?\d{1,10}\s*[}\])]/gi, " ")
+    .replace(/[([]\s*(?:19|20)\d{2}\s*[)\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped || query;
+}
+
+/**
+ * Orders IGDB results by how well their title matches `title`, best first. The year only breaks
+ * ties between equally good titles: it never changes a score, so it cannot lift a poor title over
+ * the auto-match threshold or hide a better one. Order: best title score, then a matching year,
+ * then IGDB's own order.
+ */
+function rankByTitle(
+  list: IGDBGame[],
+  title: string,
+  year?: number
+): Array<{ game: IGDBGame; score: number; yearMatches: boolean; order: number }> {
+  return list
+    .map((game, order) => ({
+      game,
+      score: scoreMatch(title, game.name),
+      yearMatches: year !== undefined && releaseYearOf(game) === year,
+      order,
+    }))
+    .sort((a, b) => b.score - a.score || +b.yearMatches - +a.yearMatches || a.order - b.order);
+}
+
 async function bestIgdbMatch(
   folderName: string,
   platformId?: number
@@ -322,25 +356,16 @@ async function bestIgdbMatch(
   candidates: IGDBGame[];
   cleaned: string;
   score: number;
+  searchFailed: boolean;
 }> {
   const cleaned = cleanReleaseName(folderName) || folderName;
 
   // An id the person wrote in the folder name is an exact match.
   const byId = await matchByIdTag(folderName);
-  if (byId) return { best: byId, candidates: [byId], cleaned, score: 1 };
+  if (byId) return { best: byId, candidates: [byId], cleaned, score: 1, searchFailed: false };
 
   const { year } = parseFolderHints(folderName);
-  const rank = (list: IGDBGame[]) =>
-    list
-      .map((game, order) => {
-        const base = scoreMatch(cleaned, game.name);
-        const yearMatches = year !== undefined && releaseYearOf(game) === year;
-        return { game, score: base, yearMatches, order };
-      })
-      // The year only breaks ties between equally good titles: it never changes a score, so
-      // it cannot lift a poor title over the auto-match threshold or hide a better one.
-      // Order: best title score, then a matching year, then IGDB's own order.
-      .sort((a, b) => b.score - a.score || +b.yearMatches - +a.yearMatches || a.order - b.order);
+  const rank = (list: IGDBGame[]) => rankByTitle(list, cleaned, year);
   const pick = (list: IGDBGame[]) => {
     const ranked = rank(list);
     return {
@@ -369,7 +394,7 @@ async function bestIgdbMatch(
     }
   } catch (err) {
     igdbLogger.warn({ err, query: cleaned }, "IGDB search failed during library scan");
-    return { best: null, candidates: [], cleaned, score: 0 };
+    return { best: null, candidates: [], cleaned, score: 0, searchFailed: true };
   }
   // Best first, so the review list shows the likeliest games at the top.
   const ranked = rank(candidates);
@@ -378,7 +403,31 @@ async function bestIgdbMatch(
     candidates: ranked.map((r) => r.game),
     cleaned,
     score: ranked[0]?.score ?? 0,
+    searchFailed: false,
   };
+}
+
+/**
+ * Why a folder was not auto-matched, for the scan log: the cleaned query IGDB saw, the number
+ * of candidates, and the best one with its score against the threshold.
+ */
+function describeMatchFailure(
+  folderName: string,
+  match: { best: IGDBGame | null; candidates: IGDBGame[]; cleaned: string; score: number }
+): { reason: string; details: Record<string, unknown> } {
+  const { year } = parseFolderHints(folderName);
+  const details: Record<string, unknown> = {
+    folderName,
+    query: match.cleaned,
+    folderYear: year ?? null,
+    candidates: match.candidates.length,
+    threshold: AUTO_MATCH_THRESHOLD,
+  };
+  if (!match.best) return { reason: "IGDB returned no candidates", details };
+  details.bestName = match.best.name;
+  details.bestYear = releaseYearOf(match.best);
+  details.bestScore = Number(match.score.toFixed(2));
+  return { reason: "best candidate scored below the auto-match threshold", details };
 }
 
 // ---------- Ingestion ----------
@@ -610,7 +659,11 @@ export async function searchUnmatchedFolder(
 ): Promise<UnmatchedEntry["candidates"]> {
   const entry = getUnmatchedEntry(rootFolderId, folderName);
   if (!entry) throw new Error("No matching unmatched entry for this root folder");
-  const results = await igdbClient.searchGames(query, SCAN_CANDIDATE_LIMIT);
+  const found = await igdbClient.searchGames(query, SCAN_CANDIDATE_LIMIT);
+  // Best match first, like the scan's own candidates; a "(2018)" in the typed name breaks ties.
+  const results = rankByTitle(found, typedTitle(query), parseFolderHints(query).year).map(
+    (r) => r.game
+  );
   // A rescan may have rebuilt the review list while IGDB answered; candidates
   // stored on the old entry would never be offered for matching.
   if (getUnmatchedEntry(rootFolderId, folderName) !== entry) {
@@ -670,6 +723,9 @@ export async function matchUnmatchedFolder(
 
   const files = isFile ? [{ absolutePath, size: standaloneSize }] : await listFiles(absolutePath);
   const filesAdded = await assignFilesToGame(game.id, files);
+  // The version of the folder the game keeps, not of one it was just matched with.
+  if (!isFile)
+    await recordVersionFromInstallFolder(storage, game.id, game.libraryPath ?? absolutePath);
 
   clearUnmatched(rootFolderId, folderName);
   return { gameId: game.id, filesAdded };
@@ -747,6 +803,25 @@ export async function rescanRootFolderById(rootFolderId: string, userId: string)
   await scanRootFolderById(rootFolderId, userId);
 }
 
+/**
+ * Re-reads the install files of the games living under a root folder, so a game that was
+ * patched in place gets its new version. Best-effort: one folder failing never stops the scan.
+ */
+async function refreshInstalledVersions(rootPath: string, userId: string): Promise<void> {
+  try {
+    const root = path.resolve(rootPath);
+    const games = await storage.getUserGames(userId, true);
+    for (const game of games) {
+      if (!game.libraryPath || game.installedVersionSource === "manual") continue;
+      const folder = path.resolve(game.libraryPath);
+      if (folder !== root && !folder.startsWith(root + path.sep)) continue;
+      await recordVersionFromInstallFolder(storage, game.id, folder);
+    }
+  } catch (err) {
+    routesLogger.warn({ err, rootPath }, "scan: could not refresh installed versions");
+  }
+}
+
 type RootFolderRow = NonNullable<Awaited<ReturnType<typeof storage.getRootFolder>>>;
 
 /** Auto-link a strongly matched candidate to a game and record its files. */
@@ -776,6 +851,7 @@ async function recordMatchedCandidate(
     }
   }
   await assignFilesToGame(game.id, files);
+  await recordVersionFromInstallFolder(storage, game.id, game.libraryPath ?? cand.absolutePath);
   return game.id;
 }
 
@@ -891,17 +967,22 @@ async function processCandidate(
     return;
   }
 
-  const {
-    best,
-    candidates: igdbCandidates,
-    score,
-  } = await bestIgdbMatch(cand.folderName, switchInfo ? SWITCH_IGDB_PLATFORM_ID : undefined);
+  const match = await bestIgdbMatch(
+    cand.folderName,
+    switchInfo ? SWITCH_IGDB_PLATFORM_ID : undefined
+  );
+  const { best, candidates: igdbCandidates, score } = match;
 
   if (best && score >= AUTO_MATCH_THRESHOLD) {
     const gameId = await recordMatchedCandidate(cand, best, userId, files, progress);
     registerSwitchFamilies(files, gameId, switchFamilies);
     progress.matched += 1;
   } else {
+    // The search error itself is already logged by bestIgdbMatch.
+    if (!match.searchFailed) {
+      const { reason, details } = describeMatchFailure(cand.folderName, match);
+      igdbLogger.info(details, `Library scan: folder left in Needs Review: ${reason}`);
+    }
     recordUnmatchedCandidate(rootFolder, cand, igdbCandidates);
     progress.unmatched += 1;
   }
@@ -956,6 +1037,8 @@ async function runScan(
       progress.processedCandidates += 1;
       emitProgress(progress);
     }
+
+    await refreshInstalledVersions(rootFolder.path, userId);
 
     // Record the scan time first: the next folder of a batch is already
     // "queued", so nothing waits on I/O between this completion and its start.

@@ -317,6 +317,8 @@ const RELEASE_TOKENS = new Set([
   "macos",
   "osx",
   "switch",
+  "switch2",
+  "n64",
   "nsw",
   "nsp",
   "xci",
@@ -390,7 +392,16 @@ const RELEASE_TOKENS = new Set([
   "scene",
 ]);
 
-const METADATA_TOKENS = new Set([...EDITION_TOKENS, ...CONTENT_TOKENS, ...RELEASE_TOKENS]);
+// Standalone region markers ("Game EUR PS4-GROUP"), the plain-word counterpart of the bracketed
+// "(US)" tags. Only read after the game name, so a title that starts with one still matches.
+const REGION_TOKENS = new Set(["eur", "usa", "jpn", "pal", "ntsc"]);
+
+const METADATA_TOKENS = new Set([
+  ...EDITION_TOKENS,
+  ...CONTENT_TOKENS,
+  ...RELEASE_TOKENS,
+  ...REGION_TOKENS,
+]);
 
 const METADATA_TOKEN_PATTERNS = [
   /^v\d+$/, // v1, v2 (normalization splits v1.0 into "v1" "0")
@@ -476,9 +487,16 @@ const TITLE_MATCH_RANK: Record<TitleMatch, number> = {
   mismatch: 0,
 };
 
-/** "Game of the Year" is an edition; "game" and "year" alone can be part of another title. */
+/**
+ * "Game of the Year" is an edition; "game" and "year" alone can be part of another title.
+ * "Nintendo Switch 2" and "Nintendo 64" are single platform markers, so the trailing number
+ * is not read as a title word.
+ */
 function withGotyPhrase(normalized: string): string {
-  return normalized.replaceAll(/\bgame of the year\b/g, "goty");
+  return normalized
+    .replaceAll(/\bgame of the year\b/g, "goty")
+    .replaceAll(/\b(?:nintendo ?)?switch ?2\b/g, "switch2")
+    .replaceAll(/\bnintendo ?64\b/g, "n64");
 }
 
 function classifyAgainstTitle(

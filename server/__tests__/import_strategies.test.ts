@@ -356,6 +356,77 @@ describe("ImportStrategies", () => {
       expect(unpacked.proposedPath).toBe(path.join(lib, "PC", "My Game (2019)"));
     });
 
+    it("puts a single file in its own game folder when asked to", async () => {
+      const root = tempDir();
+      const folder = path.join(root, "downloads", "Release");
+      await fs.outputFile(path.join(folder, "game.exe"), "exe");
+      const single = path.join(root, "downloads", "single.nsp");
+      await fs.writeFile(single, "nsp");
+      const strategy = new PCImportStrategy();
+      const game = makeGame({ title: "My Game" });
+      const lib = path.join(root, "library");
+      const config = makeImportConfig({ renamePattern: "{Title}", folderForSingleFiles: true });
+
+      const filePlan = await strategy.planImport(single, game, lib, config, "Switch");
+      expect(filePlan.proposedPath).toBe(path.join(lib, "Switch", "My Game", "My Game.nsp"));
+      // the game's own entry is the folder, which is what an upgrade replaces
+      expect(filePlan.wrapperFolder).toBe(path.join(lib, "Switch", "My Game"));
+
+      // folders and archives that will be unpacked already get a folder of their own
+      const dirPlan = await strategy.planImport(folder, game, lib, config, "Switch");
+      expect(dirPlan.proposedPath).toBe(path.join(lib, "Switch", "My Game"));
+      const unpacked = await strategy.planImport(single, game, lib, config, "Switch", {
+        treatAsDirectory: true,
+      });
+      expect(unpacked.proposedPath).toBe(path.join(lib, "Switch", "My Game"));
+
+      // a file without an extension is a single file too
+      const bare = path.join(root, "downloads", "gamefile");
+      await fs.writeFile(bare, "bin");
+      const barePlan = await strategy.planImport(bare, game, lib, config, "Switch");
+      expect(barePlan.proposedPath).toBe(path.join(lib, "Switch", "My Game", "My Game"));
+
+      // and the file stays directly in the platform folder when it is off
+      const off = await strategy.planImport(
+        single,
+        game,
+        lib,
+        { ...config, folderForSingleFiles: false },
+        "Switch"
+      );
+      expect(off.proposedPath).toBe(path.join(lib, "Switch", "My Game.nsp"));
+      expect(off.wrapperFolder).toBeUndefined();
+
+      const result = await strategy.executeImport(filePlan, "copy");
+      expect(result.filesPlaced.length).toBe(1);
+      expect(await fs.readFile(path.join(lib, "Switch", "My Game", "My Game.nsp"), "utf8")).toBe(
+        "nsp"
+      );
+    });
+
+    it("refuses to import a wrapped file into a game folder that is a symlink", async () => {
+      const root = tempDir();
+      const single = path.join(root, "downloads", "single.nsp");
+      await fs.outputFile(single, "nsp");
+      const outside = path.join(root, "elsewhere");
+      await fs.ensureDir(outside);
+      const lib = path.join(root, "library");
+      await fs.ensureDir(path.join(lib, "Switch"));
+      await fs.symlink(outside, path.join(lib, "Switch", "My Game"));
+      const strategy = new PCImportStrategy();
+      const config = makeImportConfig({ renamePattern: "{Title}", folderForSingleFiles: true });
+
+      const plan = await strategy.planImport(
+        single,
+        makeGame({ title: "My Game" }),
+        lib,
+        config,
+        "Switch"
+      );
+      await expect(strategy.executeImport(plan, "copy")).rejects.toThrow(/symlinked game folder/);
+      expect(await fs.readdir(outside)).toEqual([]);
+    });
+
     it("keeps a hostile release name inside the library", async () => {
       const root = tempDir();
       const folder = path.join(root, "downloads", "Release");
@@ -711,6 +782,151 @@ describe("ImportStrategies", () => {
       expect(await fs.readFile(path.join(destination, "game.rom"), "utf8")).toBe(
         "extracted-rom-bytes"
       );
+    });
+
+    it("recognizes files an interrupted hardlink transfer already placed, in both branches", async () => {
+      const { sourceDir, destination, excludePaths } = await makeExcludeFixture({
+        "game.rom": "loose-rom-bytes",
+      });
+      await fs.ensureDir(destination);
+      await fs.link(path.join(sourceDir, "game.rom"), path.join(destination, "game.rom"));
+
+      const strategy = new PCImportStrategy();
+      const plan = {
+        needsReview: false,
+        originalPath: sourceDir,
+        proposedPath: destination,
+        strategy: "pc" as const,
+      };
+      await expect(strategy.executeImport(plan, "hardlink", excludePaths)).resolves.toBeDefined();
+      await expect(
+        strategy.executeImport(
+          { ...plan, fileCategories: [{ name: "game.rom", category: "main" }] },
+          "hardlink",
+          excludePaths
+        )
+      ).resolves.toBeDefined();
+    });
+
+    it("retries in copy mode over a hardlink left by an interrupted run", async () => {
+      const { sourceDir, destination, excludePaths } = await makeExcludeFixture({
+        "game.rom": "loose-rom-bytes",
+      });
+      await fs.ensureDir(destination);
+      await fs.link(path.join(sourceDir, "game.rom"), path.join(destination, "game.rom"));
+
+      const strategy = new PCImportStrategy();
+      await strategy.executeImport(
+        {
+          needsReview: false,
+          originalPath: sourceDir,
+          proposedPath: destination,
+          strategy: "pc",
+          fileCategories: [{ name: "game.rom", category: "main" }],
+        },
+        "copy",
+        excludePaths
+      );
+      expect(await fs.readFile(path.join(destination, "game.rom"), "utf8")).toBe("loose-rom-bytes");
+      expect(await fs.pathExists(path.join(sourceDir, "game.rom"))).toBe(true);
+    });
+
+    it("never removes the source when source and destination are the same path (sortExtras)", async () => {
+      const root = tempDir();
+      const sourceDir = path.join(root, "downloads", "game-folder");
+      await fs.ensureDir(sourceDir);
+      await fs.writeFile(path.join(sourceDir, "game.rom"), "rom-bytes");
+
+      const strategy = new PCImportStrategy();
+      await expect(
+        strategy.executeImport(
+          {
+            needsReview: false,
+            originalPath: sourceDir,
+            proposedPath: sourceDir,
+            strategy: "pc",
+            fileCategories: [{ name: "game.rom", category: "main" }],
+          },
+          "copy",
+          new Set([path.join(sourceDir, "other.zip")])
+        )
+      ).rejects.toThrow("Destination already exists, refusing to overwrite");
+      expect(await fs.readFile(path.join(sourceDir, "game.rom"), "utf8")).toBe("rom-bytes");
+    });
+
+    it("never removes the source reached through a symlinked destination directory", async () => {
+      const root = tempDir();
+      const sourceDir = path.join(root, "downloads", "game-folder");
+      const aliasDir = path.join(root, "alias");
+      await fs.ensureDir(sourceDir);
+      await fs.writeFile(path.join(sourceDir, "game.rom"), "rom-bytes");
+      await fs.symlink(sourceDir, aliasDir);
+
+      const strategy = new PCImportStrategy();
+      await expect(
+        strategy.executeImport(
+          {
+            needsReview: false,
+            originalPath: sourceDir,
+            proposedPath: aliasDir,
+            strategy: "pc",
+            fileCategories: [{ name: "game.rom", category: "main" }],
+          },
+          "copy",
+          new Set([path.join(sourceDir, "other.zip")])
+        )
+      ).rejects.toThrow("Destination already exists, refusing to overwrite");
+      expect(await fs.readFile(path.join(sourceDir, "game.rom"), "utf8")).toBe("rom-bytes");
+    });
+
+    it("never removes a symlink entry that is both source and destination (sortExtras)", async () => {
+      const root = tempDir();
+      const sourceDir = path.join(root, "downloads", "game-folder");
+      await fs.ensureDir(sourceDir);
+      await fs.writeFile(path.join(root, "target.rom"), "rom-bytes");
+      await fs.symlink(path.join(root, "target.rom"), path.join(sourceDir, "game.rom"));
+
+      const strategy = new PCImportStrategy();
+      await expect(
+        strategy.executeImport(
+          {
+            needsReview: false,
+            originalPath: sourceDir,
+            proposedPath: sourceDir,
+            strategy: "pc",
+            fileCategories: [{ name: "game.rom", category: "main" }],
+          },
+          "symlink",
+          new Set([path.join(sourceDir, "other.zip")])
+        )
+      ).rejects.toThrow("Destination already exists, refusing to overwrite");
+      expect((await fs.lstat(path.join(sourceDir, "game.rom"))).isSymbolicLink()).toBe(true);
+      expect(await fs.readlink(path.join(sourceDir, "game.rom"))).toBe(
+        path.join(root, "target.rom")
+      );
+    });
+
+    it("still refuses an unrelated destination file in hardlink mode", async () => {
+      const { sourceDir, destination, excludePaths } = await makeExcludeFixture({
+        "game.rom": "loose-rom-bytes",
+      });
+      await fs.ensureDir(destination);
+      await fs.writeFile(path.join(destination, "game.rom"), "loose-rom-bytes");
+
+      const strategy = new PCImportStrategy();
+      await expect(
+        strategy.executeImport(
+          {
+            needsReview: false,
+            originalPath: sourceDir,
+            proposedPath: destination,
+            strategy: "pc",
+            fileCategories: [{ name: "game.rom", category: "main" }],
+          },
+          "hardlink",
+          excludePaths
+        )
+      ).rejects.toThrow("Destination already exists, refusing to overwrite");
     });
 
     it("skips excluded entries in the sortExtras per-file path too", async () => {

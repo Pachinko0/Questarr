@@ -10,13 +10,14 @@ import MobileBottomNav from "@/components/MobileBottomNav";
 import { getPageTitle } from "@/components/navigation-items";
 import { useBackgroundNotifications } from "@/hooks/use-background-notifications";
 import { useGameUpdatedSocket } from "@/hooks/use-game-updated-socket";
+import { usePlaySessionsSocket } from "@/hooks/use-play-sessions-socket";
 import { AuthProvider } from "@/lib/auth";
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef } from "react";
 import LoadingFallback from "@/components/LoadingFallback";
 import { ThemeProvider } from "next-themes";
 import "@/lib/in-app-history";
 import { routerBase } from "@/lib/app-path";
-import { authRoute, gameDetailsRoutePattern, routePaths } from "@/lib/routes";
+import { authRoute, gameDetailsRoutePattern, routePaths, settingsRoutePattern } from "@/lib/routes";
 import { applyThemeClass, migrateLegacyTheme } from "@/lib/theme-mode";
 import { GHOST_UNLOCK_KEY } from "@/lib/ghost-mode";
 
@@ -45,6 +46,7 @@ const ImportHistoryPage = lazy(() => import("@/pages/import-history"));
 const ActivityHistoryPage = lazy(() => import("@/pages/activity-history"));
 const ActivityBlocklistPage = lazy(() => import("@/pages/activity-blocklist"));
 const SystemTasksPage = lazy(() => import("@/pages/system-tasks"));
+const SystemBackupsPage = lazy(() => import("@/pages/system-backups"));
 const PlayPage = lazy(() => import("@/pages/play"));
 const GameDetailsPage = lazy(() => import("@/pages/game-details"));
 
@@ -136,7 +138,7 @@ function Router() {
         <Route path={routePaths.downloads} component={DownloadsPage} />
         <Route path={routePaths.indexers} component={IndexersPage} />
         <Route path={routePaths.downloaders} component={DownloadersPage} />
-        <Route path={routePaths.settings} component={SettingsPage} />
+        <Route path={settingsRoutePattern} component={SettingsPage} />
         <Route path={routePaths.calendar} component={CalendarPage} />
         <Route path={routePaths.wishlist} component={WishlistPage} />
         <Route path={routePaths.playing} component={PlayingPage} />
@@ -150,6 +152,7 @@ function Router() {
         <Route path={routePaths.activityHistory} component={ActivityHistoryPage} />
         <Route path={routePaths.activityBlocklist} component={ActivityBlocklistPage} />
         <Route path={routePaths.systemTasks} component={SystemTasksPage} />
+        <Route path={routePaths.systemBackups} component={SystemBackupsPage} />
         <Route component={NotFound} />
       </Switch>
     </Suspense>
@@ -160,6 +163,7 @@ function AppContent() {
   // Enable background notifications for downloads
   useBackgroundNotifications();
   useGameUpdatedSocket();
+  usePlaySessionsSocket();
 
   return <Router />;
 }

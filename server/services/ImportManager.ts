@@ -30,7 +30,11 @@ import { logger } from "../logger.js";
 import { extractHostnameFromUrl } from "../url-utils.js";
 import { isSensitivePath, assertWithinRoots } from "../path-security.js";
 import { notifyUser } from "../socket.js";
-import { recordVersionFromCompletedDownload } from "../game-version.js";
+import { carriesBaseGameVersion, inferReleaseCategory } from "../../shared/version-utils.js";
+import {
+  recordVersionFromCompletedDownload,
+  recordVersionFromInstallFolder,
+} from "../game-version.js";
 import { resolvePrefs } from "../notification-prefs.js";
 import { appriseClient } from "../apprise.js";
 import { isRommPlatformFoldersEnabled, requestRommScanAfterImport } from "../romm.js";
@@ -153,6 +157,15 @@ export const ARCHIVE_PASSWORD_REQUIRED_PREFIX = "ARCHIVE_PASSWORD_REQUIRED:";
 /** Thrown when a confirmation is the first to learn the security scan was incomplete. */
 export class IncompleteScanError extends Error {}
 
+type ConfirmPlan = ImportReview & {
+  transferMode?: "move" | "copy" | "hardlink" | "symlink" | undefined;
+  unpack?: boolean | undefined;
+  password?: string | undefined;
+};
+
+/** Thrown when a confirmation arrives while another import of the same download is running. */
+export class ImportInProgressError extends Error {}
+
 interface ArchiveResolution {
   archivePath: string;
   isDirectorySource: boolean;
@@ -171,6 +184,8 @@ export class ImportManager {
   // is the only way to tell an import that is still running from one that a
   // restart cut short.
   private readonly importsInFlight = new Set<string>();
+  // Tail of each game's chain of imports; see acquireGameLock.
+  private readonly gameImportQueues = new Map<string, Promise<void>>();
 
   // Optional and defaulted (rather than required) so existing call sites — and
   // the many unit tests that construct an ImportManager directly — don't all
@@ -729,6 +744,26 @@ export class ImportManager {
     }
   }
 
+  /** Publishes `import.failed` for a download; best effort, never throws. */
+  private async emitImportFailed(downloadId: string, err: unknown): Promise<void> {
+    try {
+      const download = await this.storage.getGameDownload(downloadId);
+      const game = download ? await this.storage.getGame(download.gameId) : undefined;
+      emitWebhookEvent(
+        "import.failed",
+        {
+          downloadId,
+          gameId: game?.id ?? download?.gameId ?? null,
+          gameTitle: game?.title ?? download?.downloadTitle ?? null,
+          reason: err instanceof Error ? err.message : String(err),
+        },
+        game?.userId
+      );
+    } catch (emitErr) {
+      logger.debug({ emitErr, downloadId }, "[ImportManager] import.failed webhook skipped");
+    }
+  }
+
   private async notifyStrandedImport(
     game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
     archiveInDest: string,
@@ -868,6 +903,9 @@ export class ImportManager {
     if (game.status !== "owned" && !isUserCuratedGameStatus(game.status)) {
       await this.storage.updateGameStatus(game.id, { status: "owned" }, { preserveCurated: true });
     }
+    // Last, and it never throws: a write that fails above puts the previous version back, and
+    // the new version must not stay recorded for it.
+    await this.recordInstalledVersion(downloadId, game, libraryPath);
     requestRommScanAfterImport();
   }
 
@@ -968,7 +1006,8 @@ export class ImportManager {
   /** Best-effort: a version that can't be recorded must not fail an import that succeeded. */
   private async recordInstalledVersion(
     downloadId: string,
-    game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>
+    game: NonNullable<Awaited<ReturnType<IStorage["getGame"]>>>,
+    libraryPath: string
   ): Promise<void> {
     try {
       const download = await this.storage.getGameDownload(downloadId);
@@ -979,6 +1018,11 @@ export class ImportManager {
           download.downloadTitle,
           download.category
         );
+        // The files now in the library are the better source: they replace the release's
+        // version. A DLC or extras pack's version.txt says nothing about the base game.
+        if (carriesBaseGameVersion(download.downloadTitle, download.category)) {
+          await recordVersionFromInstallFolder(this.storage, game.id, libraryPath);
+        }
       }
     } catch (error) {
       logger.warn({ error, downloadId }, "[ImportManager] Could not record the installed version");
@@ -1025,6 +1069,15 @@ export class ImportManager {
       "[ImportManager] Path not accessible after retries — check path mappings under Settings → Path Mappings"
     );
     await this.storage.updateGameDownloadStatus(downloadId, "manual_review_required");
+    emitWebhookEvent(
+      "import.failed",
+      {
+        downloadId,
+        gameTitle: meta.gameTitle ?? null,
+        reason: "The downloaded files could not be accessed. Check the path mappings.",
+      },
+      meta.userId
+    );
     if (meta.gameTitle && meta.userId) {
       try {
         const notification = await this.storage.addNotification({
@@ -1032,7 +1085,7 @@ export class ImportManager {
           type: "warning",
           title: "Import needs attention",
           message: `"${meta.gameTitle}" finished downloading but its local path could not be accessed. Check Settings → Path Mappings or trigger the import manually.`,
-          link: "/settings?tab=import",
+          link: "/settings/import",
         });
         notifyUser("notification", notification, notification.userId);
       } catch (err) {
@@ -1253,8 +1306,8 @@ export class ImportManager {
       return;
     }
 
-    const game = await this.storage.getGame(download.gameId);
-    if (!game) {
+    const queuedGame = await this.storage.getGame(download.gameId);
+    if (!queuedGame) {
       logger.error({ downloadId }, "[ImportManager] Game not found for download");
       // "error" is a dead end: unlike "manual_review_required", nothing ever
       // re-polls or surfaces it in the UI (getDownloadingGameDownloads only
@@ -1278,14 +1331,21 @@ export class ImportManager {
       return;
     }
 
-    const config = await this.storage.getImportConfig(game.userId ?? undefined);
-    if (!config.enablePostProcessing) {
+    const queuedConfig = await this.storage.getImportConfig(queuedGame.userId ?? undefined);
+    if (!queuedConfig.enablePostProcessing) {
       logger.info({ downloadId }, "[ImportManager] Post-processing disabled, skipping");
       await this.storage.updateGameDownloadStatus(downloadId, "completed");
       return;
     }
 
+    // One import at a time per game: a second one must not land in a folder the first is
+    // still replacing, or be swept away when the first rolls back.
+    const release = await this.acquireGameLock(queuedGame.id);
     try {
+      // An import that ran while this one waited may have moved the game's files or changed
+      // its version, so the game and the settings are read again now that the lock is held.
+      const game = (await this.storage.getGame(queuedGame.id)) ?? queuedGame;
+      const config = await this.storage.getImportConfig(game.userId ?? undefined);
       await this.storage.updateGameDownloadStatus(downloadId, "unpacking");
 
       const resolved = await this.resolveLocalPath(remoteDownloadPath, download.downloaderId);
@@ -1371,7 +1431,19 @@ export class ImportManager {
         downloadTitle: download.downloadTitle,
       });
 
-      if (plan.needsReview) {
+      // A new full release of a game that already has files in the library replaces them
+      // when the user turned that on. Add-ons (DLC, updates, extras) never do.
+      const replacement = await this.planReplacement(
+        download,
+        game,
+        config,
+        this.replacementTarget(game, plan.wrapperFolder, plan.proposedPath),
+        localPath
+      );
+
+      // "Destination already exists" is the old version itself when the new one goes to the
+      // same place: it is moved aside below instead of sending the import to review.
+      if (plan.needsReview && !replacement?.samePath) {
         await this.flagNeedsReview(downloadId, game, plan);
         return;
       }
@@ -1387,13 +1459,20 @@ export class ImportManager {
       }
 
       await this.storage.updateGameDownloadStatus(downloadId, "completed_pending_import");
-      const result = await this.transferWithUnpack(
-        plan,
+      const result = await this.importWithReplacement(
+        replacement,
         config.transferMode,
-        archiveResolution,
+        download,
         game,
-        password,
-        config.sortExtras
+        () =>
+          this.transferWithUnpack(
+            plan,
+            config.transferMode,
+            archiveResolution,
+            game,
+            password,
+            config.sortExtras
+          )
       );
 
       await this.finalizeImport(
@@ -1422,6 +1501,9 @@ export class ImportManager {
       } catch (statusErr) {
         logger.error({ statusErr, downloadId }, "[ImportManager] Failed to set error status");
       }
+      await this.emitImportFailed(downloadId, err);
+    } finally {
+      release();
     }
   }
 
@@ -1655,11 +1737,23 @@ export class ImportManager {
 
   async confirmImport(
     downloadId: string,
-    overridePlan?: ImportReview & {
-      transferMode?: "move" | "copy" | "hardlink" | "symlink" | undefined;
-      unpack?: boolean | undefined;
-      password?: string | undefined;
-    },
+    overridePlan?: ConfirmPlan,
+    callerUserId?: string
+  ): Promise<void> {
+    if (this.importsInFlight.has(downloadId)) {
+      throw new ImportInProgressError("An import of this download is already running");
+    }
+    this.importsInFlight.add(downloadId);
+    try {
+      await this.runConfirmImport(downloadId, overridePlan, callerUserId);
+    } finally {
+      this.importsInFlight.delete(downloadId);
+    }
+  }
+
+  private async runConfirmImport(
+    downloadId: string,
+    overridePlan?: ConfirmPlan,
     callerUserId?: string
   ): Promise<void> {
     const download = await this.storage.getGameDownload(downloadId, callerUserId);
@@ -1674,6 +1768,13 @@ export class ImportManager {
     // flagged, regardless of what the caller submits as a plan.
     if (download.status === QUARANTINED_STATUS) {
       throw new Error("This download was flagged by the security scan and cannot be imported.");
+    }
+
+    // A completed import is final: reconfirming it must neither re-transfer files nor
+    // demote the download back to manual review.
+    if (download.status === "imported") {
+      logger.info({ downloadId }, "[ImportManager] Import already completed, nothing to do");
+      return;
     }
 
     if (!overridePlan) {
@@ -1775,6 +1876,14 @@ export class ImportManager {
       const ext = path.extname(resolvedOriginalPath);
       if (ext && proposedPath.toLowerCase().endsWith(ext.toLowerCase())) {
         proposedPath = proposedPath.slice(0, -ext.length);
+        // a wrapper folder around the archive is the folder it unpacks into; only when the
+        // setting made one, or a game named like its platform folder would lose a level
+        if (
+          config.folderForSingleFiles &&
+          path.basename(path.dirname(proposedPath)) === path.basename(proposedPath)
+        ) {
+          proposedPath = path.dirname(proposedPath);
+        }
       }
     }
 
@@ -1797,6 +1906,9 @@ export class ImportManager {
       fileCategories: undefined,
       originalPath: resolvedOriginalPath,
       proposedPath,
+      // Derived here, never taken from the client: it ends up as the game's library entry
+      // and what a later upgrade replaces.
+      wrapperFolder: await this.wrappedSingleFileFolder(config, resolvedOriginalPath, proposedPath),
     };
 
     const strategy = new PCImportStrategy(await this.pathService.getConfiguredRoots());
@@ -1827,14 +1939,20 @@ export class ImportManager {
       }));
     }
 
+    const release = await this.acquireGameLock(game.id);
     try {
-      const result = await this.transferWithUnpack(
-        planToExecute,
-        transferMode,
-        archiveResolution,
-        game,
-        overridePlan.password,
-        config.sortExtras
+      // An import that ran while this one waited may have moved the game's files or changed
+      // its version: plan the replacement on the game as it is now that the lock is held.
+      const current = (await this.storage.getGame(game.id)) ?? game;
+      // A confirmed import replaces the previous version the same way an automatic one does.
+      const importConfig = await this.storage.getImportConfig(current.userId ?? undefined);
+      const replacement = await this.planReplacement(
+        download,
+        current,
+        importConfig,
+        // A single file wrapped in its game folder replaces the old version as that folder
+        this.replacementTarget(current, planToExecute.wrapperFolder, proposedPath),
+        resolvedOriginalPath
       );
 
       await this.finalizeImport(
@@ -1861,7 +1979,10 @@ export class ImportManager {
       } catch (statusErr) {
         logger.error({ statusErr, downloadId }, "[ImportManager] Failed to set error status");
       }
+      await this.emitImportFailed(downloadId, err);
       throw err;
+    } finally {
+      release();
     }
   }
 }

@@ -10,11 +10,14 @@ import { isSafeUrl, safeFetch } from "../ssrf.js";
 import type { DownloadRequest, DownloaderClient } from "./types.js";
 import {
   assertCredentialsAllowed,
-  fetchWithMagnetDetection,
   extractHashFromUrl,
+  fetchWithMagnetDetection,
+  findTorrentByTagNull,
+  getErrorMessage,
   isHttpsUrl,
   logDownloaderDebugResponse,
-  findTorrentByTagNull,
+  maxTrackerSwarmCounts,
+  runDownloaderAction,
 } from "./utils.js";
 
 interface SynologyApiDescriptor {
@@ -889,7 +892,7 @@ export class SynologyDownloadStationClient implements DownloaderClient {
       await this.logout();
       return { success: true, message: "Connected successfully to Synology Download Station" };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return {
         success: false,
         message: `Failed to connect to Synology Download Station: ${errorMessage}`,
@@ -973,7 +976,7 @@ export class SynologyDownloadStationClient implements DownloaderClient {
 
       return this.addFileUpload(request, destination, apiName, fetchResult.response);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return {
         success: false,
         message: `Failed to add download to Synology Download Station: ${errorMessage}`,
@@ -1088,78 +1091,41 @@ export class SynologyDownloadStationClient implements DownloaderClient {
     seeders?: number | undefined;
     leechers?: number | undefined;
   } {
-    let seeders: number | undefined;
-    let leechers: number | undefined;
-
-    for (const tracker of trackers ?? []) {
-      const trackerSeeders =
-        typeof tracker.seeders === "number" &&
-        Number.isFinite(tracker.seeders) &&
-        tracker.seeders >= 0
-          ? tracker.seeders
-          : undefined;
-      const trackerLeechers =
-        typeof tracker.leechers === "number" &&
-        Number.isFinite(tracker.leechers) &&
-        tracker.leechers >= 0
-          ? tracker.leechers
-          : undefined;
-
-      if (trackerSeeders !== undefined) {
-        seeders = seeders === undefined ? trackerSeeders : Math.max(seeders, trackerSeeders);
-      }
-      if (trackerLeechers !== undefined) {
-        leechers = leechers === undefined ? trackerLeechers : Math.max(leechers, trackerLeechers);
-      }
-    }
-
-    return { seeders, leechers };
+    return maxTrackerSwarmCounts(trackers ?? []);
   }
 
   async pauseDownload(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      await this.requestTaskApi("pause", {
+    return runDownloaderAction("pause", () =>
+      this.requestTaskApi("pause", {
         httpMethod: "GET",
         params: { id },
-      });
-      return { success: true, message: "Download paused successfully" };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      return { success: false, message: `Failed to pause download: ${errorMessage}` };
-    }
+      })
+    );
   }
 
   async resumeDownload(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      await this.requestTaskApi("resume", {
+    return runDownloaderAction("resume", () =>
+      this.requestTaskApi("resume", {
         httpMethod: "GET",
         params: { id },
-      });
-      return { success: true, message: "Download resumed successfully" };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      return { success: false, message: `Failed to resume download: ${errorMessage}` };
-    }
+      })
+    );
   }
 
   async removeDownload(
     id: string,
     deleteFiles = false
   ): Promise<{ success: boolean; message: string }> {
-    try {
-      await this.requestTaskApi("delete", {
+    return runDownloaderAction("remove", () =>
+      this.requestTaskApi("delete", {
         httpMethod: "GET",
         params: {
           id,
           remove: deleteFiles,
           force_complete: deleteFiles,
         },
-      });
-      return { success: true, message: "Download removed successfully" };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      return { success: false, message: `Failed to remove download: ${errorMessage}` };
-    }
+      })
+    );
   }
 
   async getFreeSpace(): Promise<number> {

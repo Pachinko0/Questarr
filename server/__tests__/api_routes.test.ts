@@ -34,6 +34,7 @@ import { searchAllIndexers } from "../search.js";
 import { igdbClient, type IGDBGame } from "../igdb.js";
 import {
   type Game,
+  type UserSettings,
   type User,
   type Indexer,
   type Downloader,
@@ -1059,6 +1060,183 @@ describe("API Routes - Extended Coverage", () => {
     });
   });
 
+  describe("PATCH /api/games/:id/finish-by", () => {
+    const gameId = "123e4567-e89b-12d3-a456-426614174000";
+
+    it("saves a target day scoped to the authenticated user", async () => {
+      vi.mocked(storage.updateGameFinishBy).mockResolvedValue({
+        id: gameId,
+        finishBy: "2026-12-31",
+      } as unknown as Game);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/finish-by`)
+        .send({ finishBy: "2026-12-31" });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameFinishBy)).toHaveBeenCalledWith(
+        gameId,
+        "user-1",
+        "2026-12-31"
+      );
+    });
+
+    it("clears the goal with null", async () => {
+      vi.mocked(storage.updateGameFinishBy).mockResolvedValue({
+        id: gameId,
+        finishBy: null,
+      } as unknown as Game);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/finish-by`)
+        .send({ finishBy: null });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameFinishBy)).toHaveBeenCalledWith(gameId, "user-1", null);
+    });
+
+    it.each(["2026-02-30", "31/12/2026", 12])("rejects %s", async (value) => {
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/finish-by`)
+        .send({ finishBy: value });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("Invalid finish-by date");
+    });
+
+    it("returns 404 when the game is not the user's", async () => {
+      vi.mocked(storage.updateGameFinishBy).mockResolvedValue(undefined);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/finish-by`)
+        .send({ finishBy: "2026-12-31" });
+      expect(response.status).toBe(404);
+    });
+  });
+
+  describe("PATCH /api/games/:id/upgrade-policy", () => {
+    it("also clears an aggregate-only searchResultsAvailable badge when off", async () => {
+      const id = "123e4567-e89b-12d3-a456-426614174000";
+      vi.mocked(storage.updateGameUpgradePolicy).mockResolvedValue({
+        id,
+        upgradePolicy: "off",
+        status: "owned",
+        searchResultsAvailable: true,
+        updateSearchResultsAvailable: false,
+        packsSearchResultsAvailable: false,
+      } as unknown as Game);
+
+      const response = await request(app)
+        .patch(`/api/games/${id}/upgrade-policy`)
+        .send({ upgradePolicy: "off" });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameSearchResultsByCategory)).toHaveBeenCalledWith(id, {
+        updates: false,
+        packs: false,
+      });
+      expect(response.body.searchResultsAvailable).toBe(false);
+    });
+
+    const gameId = "123e4567-e89b-12d3-a456-426614174000";
+
+    it("sets the policy scoped to the authenticated user", async () => {
+      vi.mocked(storage.updateGameUpgradePolicy).mockResolvedValue({
+        id: gameId,
+        upgradePolicy: "notify",
+        updateSearchResultsAvailable: true,
+      } as unknown as Game);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/upgrade-policy`)
+        .send({ upgradePolicy: "notify" });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameUpgradePolicy)).toHaveBeenCalledWith(
+        gameId,
+        "user-1",
+        "notify"
+      );
+      expect(vi.mocked(storage.updateGameSearchResultsByCategory)).not.toHaveBeenCalled();
+    });
+
+    it("clears the update and pack badges when the game resolves to off", async () => {
+      vi.mocked(storage.updateGameUpgradePolicy).mockResolvedValue({
+        id: gameId,
+        upgradePolicy: "off",
+        status: "owned",
+        searchResultsAvailable: true,
+        updateSearchResultsAvailable: true,
+        packsSearchResultsAvailable: false,
+      } as unknown as Game);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/upgrade-policy`)
+        .send({ upgradePolicy: "off" });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameSearchResultsByCategory)).toHaveBeenCalledWith(gameId, {
+        updates: false,
+        packs: false,
+      });
+      expect(response.body.updateSearchResultsAvailable).toBe(false);
+      expect(response.body.searchResultsAvailable).toBe(false);
+    });
+
+    it("clears the badges when the override is removed and the account default is off", async () => {
+      vi.mocked(storage.getUserSettings).mockResolvedValueOnce({
+        upgradePolicy: "off",
+        status: "owned",
+      } as never);
+      vi.mocked(storage.updateGameUpgradePolicy).mockResolvedValue({
+        id: gameId,
+        upgradePolicy: null,
+        status: "owned",
+        updateSearchResultsAvailable: false,
+        packsSearchResultsAvailable: true,
+      } as unknown as Game);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/upgrade-policy`)
+        .send({ upgradePolicy: null });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameSearchResultsByCategory)).toHaveBeenCalledWith(gameId, {
+        updates: false,
+        packs: false,
+      });
+    });
+
+    it("leaves the main results badge of a wanted game alone when off", async () => {
+      vi.mocked(storage.updateGameUpgradePolicy).mockResolvedValue({
+        id: gameId,
+        upgradePolicy: "off",
+        status: "wanted",
+        searchResultsAvailable: true,
+        updateSearchResultsAvailable: false,
+        packsSearchResultsAvailable: false,
+      } as unknown as Game);
+      vi.mocked(storage.updateGameSearchResultsByCategory).mockClear();
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/upgrade-policy`)
+        .send({ upgradePolicy: "off" });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(storage.updateGameSearchResultsByCategory)).not.toHaveBeenCalled();
+      expect(response.body.searchResultsAvailable).toBe(true);
+    });
+
+    it("rejects an unknown policy", async () => {
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/upgrade-policy`)
+        .send({ upgradePolicy: "always" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("Invalid upgrade policy data");
+    });
+
+    it("returns 404 when the game is not the user's", async () => {
+      vi.mocked(storage.updateGameUpgradePolicy).mockResolvedValue(undefined);
+
+      const response = await request(app)
+        .patch(`/api/games/${gameId}/upgrade-policy`)
+        .send({ upgradePolicy: "off" });
+      expect(response.status).toBe(404);
+    });
+  });
+
   describe("GET /api/games/:id", () => {
     const gameId = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -1808,7 +1986,8 @@ describe("API Routes - Extended Coverage", () => {
         expect(response.status).toBe(200);
         expect(newznabClient.search).toHaveBeenCalledWith(
           expect.any(Object),
-          expect.objectContaining({ query: "The.Witcher.3" })
+          expect.objectContaining({ query: "The.Witcher.3" }),
+          expect.anything()
         );
         expect(torznabClient.searchGames).not.toHaveBeenCalled();
       });
@@ -1823,7 +2002,8 @@ describe("API Routes - Extended Coverage", () => {
         expect(response.status).toBe(200);
         expect(newznabClient.search).toHaveBeenCalledWith(
           expect.any(Object),
-          expect.objectContaining({ query: "The Witcher 3" })
+          expect.objectContaining({ query: "The Witcher 3" }),
+          expect.anything()
         );
       });
     });
@@ -2606,6 +2786,43 @@ describe("API Routes - Extended Coverage", () => {
 
         const response = await request(app).patch("/api/settings").send({});
         expect(response.status).toBe(200);
+      });
+
+      it("clears update badges of games following an account default of off", async () => {
+        vi.mocked(storage.getUserSettings).mockResolvedValue({ id: "s-1" } as UserSettings);
+        vi.mocked(storage.updateUserSettings).mockResolvedValue({
+          id: "s-1",
+          upgradePolicy: "off",
+        } as UserSettings);
+        vi.mocked(storage.getUserGames).mockResolvedValueOnce([
+          {
+            id: "g-follow",
+            status: "owned",
+            upgradePolicy: null,
+            updateSearchResultsAvailable: true,
+          },
+          {
+            id: "g-notify",
+            status: "owned",
+            upgradePolicy: "notify",
+            updateSearchResultsAvailable: true,
+          },
+          {
+            id: "g-clean",
+            status: "owned",
+            upgradePolicy: null,
+            updateSearchResultsAvailable: false,
+          },
+        ] as unknown as Game[]);
+        vi.mocked(storage.updateGameSearchResultsByCategory).mockClear();
+
+        const response = await request(app).patch("/api/settings").send({ upgradePolicy: "off" });
+        expect(response.status).toBe(200);
+        expect(vi.mocked(storage.updateGameSearchResultsByCategory)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(storage.updateGameSearchResultsByCategory)).toHaveBeenCalledWith(
+          "g-follow",
+          { updates: false, packs: false }
+        );
       });
 
       it("should return 400 for an invalid transferMode", async () => {
@@ -3437,7 +3654,14 @@ describe("API Routes - Extended Coverage", () => {
   });
 
   // ─── POST /api/downloads/claim-batch ───
+  const importConfigWith = (enablePostProcessing: boolean) =>
+    ({ enablePostProcessing }) as Awaited<ReturnType<typeof storage.getImportConfig>>;
+
   describe("POST /api/downloads/claim", () => {
+    beforeEach(() => {
+      vi.mocked(storage.getImportConfig).mockResolvedValue(importConfigWith(false));
+    });
+
     it("returns 400 when the request body fails schema validation", async () => {
       const res = await request(app).post("/api/downloads/claim").send({
         downloaderId: "",
@@ -3467,6 +3691,27 @@ describe("API Routes - Extended Coverage", () => {
       expect(res.status).toBe(200);
       expect(storage.addGameDownload).toHaveBeenCalledWith(
         expect.objectContaining({ downloadHash: USENET_MIXED_CASE_ID })
+      );
+    });
+
+    it("keeps a finished download tracked as downloading when post-processing is on", async () => {
+      vi.mocked(storage.getTrackedDownloadKeys).mockResolvedValue(new Set());
+      vi.mocked(storage.getImportConfig).mockResolvedValue(importConfigWith(true));
+      mockSabnzbdClaimTarget();
+      vi.mocked(storage.addGameDownload).mockResolvedValue(undefined as any);
+
+      const res = await request(app).post("/api/downloads/claim").send({
+        downloaderId: "dl-1",
+        downloadHash: USENET_MIXED_CASE_ID,
+        downloadTitle: "My Game",
+        currentStatus: "completed",
+        category: "main",
+        gameId: "game-1",
+      });
+
+      expect(res.status).toBe(200);
+      expect(storage.addGameDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "downloading" })
       );
     });
 
@@ -3548,6 +3793,7 @@ describe("API Routes - Extended Coverage", () => {
         type: "qbittorrent",
       } as any);
       vi.mocked(storage.addGameDownload).mockResolvedValue(undefined);
+      vi.mocked(storage.getImportConfig).mockResolvedValue(importConfigWith(false));
     });
 
     it("returns 400 when items is missing", async () => {
@@ -3609,6 +3855,44 @@ describe("API Routes - Extended Coverage", () => {
       expect(res.body.skippedCount).toBe(1);
       expect(res.body.addedCount).toBe(0);
       expect(storage.addGameDownload).not.toHaveBeenCalled();
+    });
+
+    it("keeps a finished download tracked as downloading when post-processing is on so it gets imported", async () => {
+      vi.mocked(storage.getImportConfig).mockResolvedValue(importConfigWith(true));
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-1",
+        status: "wanted",
+      } as any);
+
+      const res = await request(app)
+        .post("/api/downloads/claim-batch")
+        .send({ items: [validItem] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.addedCount).toBe(1);
+      expect(storage.addGameDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "downloading" })
+      );
+      expect(storage.updateGameStatus).toHaveBeenCalledWith("game-1", { status: "downloading" });
+    });
+
+    it("stores a finished download as completed when post-processing is off", async () => {
+      vi.mocked(storage.getGame).mockResolvedValue({
+        id: "game-1",
+        userId: "user-1",
+        status: "wanted",
+      } as any);
+
+      const res = await request(app)
+        .post("/api/downloads/claim-batch")
+        .send({ items: [validItem] });
+
+      expect(res.status).toBe(200);
+      expect(storage.addGameDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "completed" })
+      );
+      expect(storage.updateGameStatus).toHaveBeenCalledWith("game-1", { status: "owned" });
     });
 
     it("marks item failed when gameId game is not found", async () => {

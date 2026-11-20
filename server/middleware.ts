@@ -185,6 +185,14 @@ export const sanitizeGameId = [
     .withMessage("Invalid game ID format"),
 ];
 
+// Sanitization rules for gameId parameter (used in tag routes)
+export const sanitizeGameIdParam = [
+  param("gameId")
+    .trim()
+    .matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    .withMessage("Invalid game ID format"),
+];
+
 // Sanitization rules for root folder ID parameters
 export const sanitizeRootFolderId = [
   param("id")
@@ -206,6 +214,10 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 // Sanitization rules for the game journal/milestone/screenshot sub-resource ID params
 export const sanitizeCollectionId = [
   param("collectionId").trim().matches(UUID_PATTERN).withMessage("Invalid collection ID format"),
+];
+
+export const sanitizeTagId = [
+  param("tagId").trim().matches(UUID_PATTERN).withMessage("Invalid tag ID format"),
 ];
 
 export const sanitizeJournalEntryId = [
@@ -317,6 +329,11 @@ export const sanitizeIndexerData = [
     .isIn(["torznab", "newznab", "g4u"])
     .withMessage("Invalid protocol"),
   body("enabled").optional().isBoolean().withMessage("Enabled must be a boolean").toBoolean(),
+  body("timeoutSeconds")
+    .optional({ values: "null" })
+    .isInt({ min: 1, max: 300 })
+    .withMessage("Timeout must be an integer between 1 and 300 seconds")
+    .toInt(),
 ];
 
 // Sanitization rules for partial indexer updates (PATCH)
@@ -345,6 +362,11 @@ export const sanitizeIndexerUpdateData = [
     .trim()
     .isLength({ max: 500 })
     .withMessage("API key must be at most 500 characters"),
+  body("timeoutSeconds")
+    .optional({ values: "null" })
+    .isInt({ min: 1, max: 300 })
+    .withMessage("Timeout must be an integer between 1 and 300 seconds")
+    .toInt(),
   body("protocol")
     .optional()
     .trim()

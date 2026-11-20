@@ -14,6 +14,8 @@ import { SABnzbdClient } from "./sabnzbd.js";
 import { NZBGetClient } from "./nzbget.js";
 import { SynologyDownloadStationClient } from "./synology.js";
 import { DelugeClient } from "./deluge.js";
+import { RealDebridClient } from "./realdebrid.js";
+import { getErrorMessage } from "./utils.js";
 
 // To add a new downloader:
 // 1. Create server/downloaders/mynewclient.ts — implement DownloaderClient from ./types.js
@@ -39,6 +41,8 @@ export class DownloaderManager {
         return new SynologyDownloadStationClient(downloader);
       case "deluge":
         return new DelugeClient(downloader);
+      case "realdebrid":
+        return new RealDebridClient(downloader);
       default:
         throw new Error(`Unsupported downloader type: ${downloader.type}`);
     }
@@ -49,7 +53,7 @@ export class DownloaderManager {
       const client = this.createClient(downloader);
       return await client.testConnection();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return { success: false, message: errorMessage };
     }
   }
@@ -59,7 +63,7 @@ export class DownloaderManager {
       const client = this.createClient(downloader);
       await client.logVersionInfo();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       downloadersLogger.warn(
         { downloaderId: downloader.id, downloaderType: downloader.type, error: errorMessage },
         "Downloader version probe failed"
@@ -75,7 +79,7 @@ export class DownloaderManager {
       const client = this.createClient(downloader);
       return await client.addDownload(request);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return { success: false, message: errorMessage };
     }
   }
@@ -149,7 +153,7 @@ export class DownloaderManager {
       const client = this.createClient(downloader);
       return await client.pauseDownload(id);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return { success: false, message: errorMessage };
     }
   }
@@ -162,7 +166,7 @@ export class DownloaderManager {
       const client = this.createClient(downloader);
       return await client.resumeDownload(id);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return { success: false, message: errorMessage };
     }
   }
@@ -176,7 +180,7 @@ export class DownloaderManager {
       const client = this.createClient(downloader);
       return await client.removeDownload(id, deleteFiles);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return { success: false, message: errorMessage };
     }
   }
@@ -247,7 +251,7 @@ export class DownloaderManager {
           errors.push(`${downloader.name}: ${result.message}`);
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        const errorMessage = getErrorMessage(error);
         errors.push(`${downloader.name}: ${errorMessage}`);
       }
     }

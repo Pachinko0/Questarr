@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type {
   ApiKeyScope,
+  WebhookEventType,
   IntegrationRequestProvider,
   IntegrationRequestStatus,
   SeerrngArchitecture,
@@ -109,6 +110,7 @@ export const userSettings = pgTable("user_settings", {
   xrelSceneReleases: boolean("xrel_scene_releases").notNull().default(true),
   xrelP2pReleases: boolean("xrel_p2p_releases").notNull().default(false),
   autoSearchUnreleased: boolean("auto_search_unreleased").notNull().default(false),
+  upgradePolicy: text("upgrade_policy").notNull().default("notify"),
   steamSyncFailures: integer("steam_sync_failures").notNull().default(0),
   steamSyncEnabled: boolean("steam_sync_enabled").notNull().default(false),
   steamSyncIntervalHours: integer("steam_sync_interval_hours").notNull().default(24),
@@ -133,6 +135,12 @@ export const userSettings = pgTable("user_settings", {
   libraryRoot: text("library_root").notNull().default("/data"),
   autoDeleteAfterImport: boolean("auto_delete_after_import").notNull().default(false),
   sortExtras: boolean("sort_extras").notNull().default(false),
+  // What happens to the version already in the library when a new one is imported:
+  // "off" (kept), "archive" (moved to .questarr-replaced) or "delete".
+  upgradeReplaceMode: text("upgrade_replace_mode").notNull().default("off"),
+  // A release that is a single file lands in a folder named like the game, as multi-file
+  // releases do, instead of directly in the platform folder.
+  folderForSingleFiles: boolean("folder_for_single_files").notNull().default(true),
   // Telemetry: opt-in, off by default. When enabled, automatically-detected server
   // errors are sent as a diagnostic report without prompting (see server/error-telemetry.ts).
   telemetryEnabled: boolean("telemetry_enabled").notNull().default(false),
@@ -165,7 +173,8 @@ export const games = pgTable("games", {
   screenshots: jsonb("screenshots").$type<string[]>(),
   gameModes: jsonb("game_modes").$type<string[]>(),
   videos: jsonb("videos").$type<Array<{ name: string; videoId: string }>>(),
-  source: text("source").default("manual"), // "manual" | "steam" | "api"
+  source: text("source").default("manual"), // "manual" | "steam" | "api" | "gog" | "epic"
+  statusSyncSource: text("status_sync_source"),
   igdbWebsites: jsonb("igdb_websites").$type<Array<{ category: number; url: string }>>(),
   expansions: jsonb("expansions").$type<GameExpansion[]>(),
   aggregatedRating: doublePrecision("aggregated_rating"),
@@ -182,6 +191,9 @@ export const games = pgTable("games", {
   userRating: doublePrecision("user_rating"),
   libraryPath: text("library_path"),
   installedVersion: text("installed_version"),
+  installedVersionSource: text("installed_version_source"),
+  upgradePolicy: text("upgrade_policy"),
+  finishBy: text("finish_by"),
   searchResultsAvailable: boolean("search_results_available").default(false).notNull(),
   searchResultsAvailableAt: timestampMs("search_results_available_at"),
   updateSearchResultsAvailable: boolean("update_search_results_available").default(false).notNull(),
@@ -207,6 +219,7 @@ export const indexers = pgTable("indexers", {
   // does not support TLS). When this flag is false and the indexer URL uses
   // HTTP, API keys are omitted from every outbound request.
   allowInsecureLan: boolean("allow_insecure_lan").notNull().default(false),
+  timeoutSeconds: integer("timeout_seconds"),
   createdAt: timestampMs("created_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
   updatedAt: timestampMs("updated_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
 });
@@ -397,6 +410,36 @@ export const collectionGames = pgTable(
   (t) => [uniqueIndex("collection_games_collection_game_idx").on(t.collectionId, t.gameId)]
 );
 
+export const tags = pgTable(
+  "tags",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color"),
+    createdAt: timestampMs("created_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+    updatedAt: timestampMs("updated_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+  },
+  (t) => [index("tags_user_idx").on(t.userId)]
+);
+
+export const gameTags = pgTable(
+  "game_tags",
+  {
+    id: text("id").primaryKey(),
+    gameId: text("game_id")
+      .notNull()
+      .references(() => games.id, { onDelete: "cascade" }),
+    tagId: text("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    addedAt: timestampMs("added_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+  },
+  (t) => [uniqueIndex("game_tags_game_tag_idx").on(t.gameId, t.tagId)]
+);
+
 export const gameJournalEntries = pgTable(
   "game_journal_entries",
   {
@@ -436,6 +479,63 @@ export const gamePlaySessions = pgTable(
       .on(t.userId)
       .where(sql`${t.endedAt} is null`),
   ]
+);
+
+export const gameStatusEvents = pgTable(
+  "game_status_events",
+  {
+    id: text("id").primaryKey(),
+    gameId: text("game_id")
+      .notNull()
+      .references(() => games.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    createdAt: timestampMs("created_at")
+      .notNull()
+      .default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+  },
+  (t) => [
+    index("game_status_events_game_idx").on(t.gameId),
+    index("game_status_events_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
+export const webhookSubscriptions = pgTable(
+  "webhook_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    secret: text("secret").notNull(),
+    events: jsonb("events").$type<WebhookEventType[]>().notNull().default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestampMs("created_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+    updatedAt: timestampMs("updated_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+  },
+  (t) => [index("webhook_subscriptions_user_id_idx").on(t.userId)]
+);
+
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    subscriptionId: text("subscription_id")
+      .notNull()
+      .references(() => webhookSubscriptions.id, { onDelete: "cascade" }),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    statusCode: integer("status_code"),
+    error: text("error"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestampMs("created_at").default(sql`(EXTRACT(EPOCH FROM now()) * 1000)::bigint`),
+  },
+  (t) => [index("webhook_deliveries_sub_created_idx").on(t.subscriptionId, t.createdAt)]
 );
 
 export const gameMilestones = pgTable(

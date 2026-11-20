@@ -1,3 +1,4 @@
+import { guardedIndexerSearch } from "./search-guard.js";
 import { isSameProwlarrUrl } from "../shared/prowlarr-url.js";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { body, param } from "express-validator";
@@ -15,6 +16,7 @@ import {
   updateGameStatusSchema,
   updateGameHiddenSchema,
   updateGameUserRatingSchema,
+  updateGameFinishBySchema,
   updateGameInstalledVersionSchema,
   updateGameTargetPlatformSchema,
   insertIndexerSchema,
@@ -38,11 +40,14 @@ import {
   type InsertImportTaskItem,
   type ScannedGameFile,
   type GameFileCategory,
+  updateGameUpgradePolicySchema,
+  resolveUpgradePolicy,
+  OWNED_GAME_STATUSES,
 } from "../shared/schema.js";
 import { isUsenetDownloaderType } from "../shared/downloader-types.js";
 import { parseJsonObject } from "../shared/json-object-utils.js";
 import { torznabClient } from "./torznab.js";
-import { newznabClient } from "./newznab.js";
+import { newznabClient, type NewznabResult } from "./newznab.js";
 import { rssService } from "./rss.js";
 import { DownloaderManager } from "./downloaders.js";
 import {
@@ -53,6 +58,7 @@ import {
 import { z } from "zod";
 import { routesLogger } from "./logger.js";
 import { getPendingReport, sendPendingReport } from "./error-telemetry.js";
+import { buildDiagnosticsSnapshot, formatDiagnosticsBlock } from "./diagnostics.js";
 import { SCAN_MAX_FILES, SCAN_TIME_BUDGET_MS } from "./scan-limits.js";
 import {
   igdbRateLimiter,
@@ -111,6 +117,7 @@ import {
 } from "./auth.js";
 import { setAuthCookies, clearAuthCookies, csrfProtection } from "./security.js";
 import { nexusmodsClient } from "./nexusmods.js";
+import { getSteamApiKeySource, saveSteamApiKey } from "./steam-api-key.js";
 import {
   typesafeClient,
   TYPESAFE_URL_CONFIG_KEY,
@@ -321,11 +328,13 @@ import { ZipArchive } from "archiver";
 import helmet from "helmet";
 import { steamRoutes } from "./steam-routes.js";
 import { steamLibraryRoutes } from "./steam-library-routes.js";
+import { steamPlaytimeRoutes } from "./steam-playtime-routes.js";
+import { playniteSyncRoutes } from "./playnite-sync-routes.js";
 import { releaseScoringRoutes } from "./release-scoring-routes.js";
 import { classificationCandidatesRoutes } from "./classification-candidates-routes.js";
 import { classificationSettingsRoutes } from "./classification-settings-routes.js";
 import {
-  isAutoEligible,
+  isResultEligible,
   loadScoringConfig,
   trustFor,
   type ScoringConfig,
@@ -340,6 +349,8 @@ import { evaluateReleases } from "../shared/release-scoring.js";
 import { collectionRoutes } from "./collection-routes.js";
 import { gameJournalRoutes, screenshotDirForGame } from "./game-journal-routes.js";
 import { playSessionRoutes } from "./play-session-routes.js";
+import { backlogRoutes } from "./backlog-routes.js";
+import { default as tagRoutes } from "./tag-routes.js";
 import {
   getContentFilterFlags,
   isContentFiltered,
@@ -354,6 +365,7 @@ import { importTasksRouter } from "./routes/import-tasks.js";
 import { systemRouter } from "./routes/system.js";
 import { importManager } from "./services/index.js";
 import { activityRouter } from "./routes/activity.js";
+import { realDebridRouter } from "./routes/realdebrid.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
 import {
   listExternalGames,
@@ -381,6 +393,7 @@ import {
 } from "./library-rescan.js";
 import { integrationRouter } from "./routes/integration.js";
 import { apiKeysRouter } from "./routes/api-keys.js";
+import { webhooksRouter } from "./routes/webhooks.js";
 import { isAdminApiRoute } from "./admin-api-routes.js";
 
 // Cache-Control header values for IGDB discovery endpoints
@@ -873,7 +886,8 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
     // Update the "has results" flag only for canonical game-title searches so that
     // partial/custom user-typed queries in the download dialog don't flip the badge
     // based on a transient, narrow result set. Runs async to avoid blocking the response.
-    // Same rule as auto-search: an accepted release with a clear title match.
+    // Same rule as the auto-search badge: an accepted release whose title matches, even when
+    // its group suffix is not a known one.
     if (ownGame && normalizeTitle(query.trim()) === normalizeTitle(ownGame.title)) {
       // the game's own target platform wins over the account default, as in the scoring above
       const preferredPlatform = resolveGamePlatformPreference(
@@ -882,8 +896,7 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       );
       const usable = scoredItems.filter(
         ({ evaluation, blacklisted }) =>
-          !blacklisted &&
-          (evaluation && scoringConfig ? isAutoEligible(evaluation, scoringConfig) : true)
+          !blacklisted && (evaluation && scoringConfig ? isResultEligible(evaluation) : true)
       );
       const platformFiltered = preferredPlatform
         ? usable.filter((item) => {
@@ -1139,12 +1152,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Use Steam Routes
   app.use(steamRoutes);
   app.use(steamLibraryRoutes);
+  app.use(steamPlaytimeRoutes);
+  app.use(playniteSyncRoutes);
   app.use(releaseScoringRoutes);
   app.use(classificationCandidatesRoutes);
   app.use(classificationSettingsRoutes);
   app.use(gameJournalRoutes);
   app.use(playSessionRoutes);
+  app.use(backlogRoutes);
   app.use(collectionRoutes);
+  app.use(tagRoutes);
   // Use PCGamingWiki Routes
   app.use(pcgamingwikiRouter);
 
@@ -1175,6 +1192,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       routesLogger.error({ error }, "Failed to read server log file");
       return res.status(500).json({ error: "Failed to read log file" });
+    }
+  });
+
+  // Secret-free configuration summary + error digest, attached to "Send Logs"
+  // submissions (see server/diagnostics.ts). Returns the rendered text block.
+  app.get("/api/diagnostics", authenticateToken, async (req, res) => {
+    try {
+      const logPath = path.resolve(process.cwd(), "server.log");
+      const logLines = await readLastLogLines(logPath, 1000).catch(() => [] as string[]);
+      const snapshot = await buildDiagnosticsSnapshot({ logLines, userId: req.user!.id });
+      return res.json({ report: formatDiagnosticsBlock(snapshot) });
+    } catch (error) {
+      routesLogger.error({ error }, "Failed to build diagnostics snapshot");
+      return res.status(500).json({ error: "Failed to build diagnostics" });
     }
   });
 
@@ -1844,12 +1875,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
   app.use("/api/import-tasks", importTasksRouter);
+  app.use("/api/system/backups", backupsRouter);
   app.use("/api/system", systemRouter);
   app.use("/api/activity", activityRouter);
+  app.use("/api/downloaders/:id/realdebrid", realDebridRouter);
   // Authenticated by the /api gate above (JWT or integration API key); same
   // reasoning as the mounts above.
   app.use("/api/integration", integrationRateLimiter, integrationRouter);
   app.use("/api/api-keys", apiKeysRouter);
+  app.use("/api/webhooks", webhooksRouter);
 
   // Last-used Prowlarr sync settings, to prefill the sync dialog. The stored
   // API key never leaves the server: only the redaction placeholder does.
@@ -2183,6 +2217,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     )
   );
 
+  // Personal "finish by" target day (YYYY-MM-DD), or null to clear it.
+  app.patch(
+    "/api/games/:id/finish-by",
+    sensitiveEndpointLimiter,
+    sanitizeGameId,
+    validateRequest,
+    patchOwnGameField(
+      updateGameFinishBySchema,
+      (id, userId, { finishBy }) => storage.updateGameFinishBy(id, userId, finishBy),
+      {
+        invalid: "Invalid finish-by date",
+        log: "error updating game finish-by date",
+        failure: "Failed to update the finish-by date",
+      }
+    )
+  );
+
   // Set the version of the game the user has installed (free text), or null to clear it.
   // Used to skip "update available" notifications for releases that aren't newer.
   app.patch(
@@ -2202,6 +2253,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invalid: "Invalid installed version data",
         log: "error updating game installed version",
         failure: "Failed to update installed version",
+      }
+    )
+  );
+
+  // Set how this game reacts to newer versions (off / notify), or null to follow the account default.
+  app.patch(
+    "/api/games/:id/upgrade-policy",
+    sensitiveEndpointLimiter,
+    sanitizeGameId,
+    validateRequest,
+    patchOwnGameField(
+      updateGameUpgradePolicySchema,
+      async (id, userId, { upgradePolicy }) => {
+        let game = await storage.updateGameUpgradePolicy(id, userId, upgradePolicy);
+        if (game) {
+          // Auto-search's own cleanup only runs while it is enabled, so drop stale badges now.
+          const settings = await storage.getUserSettings(userId);
+          if (
+            OWNED_GAME_STATUSES.has(game.status) &&
+            resolveUpgradePolicy(game.upgradePolicy, settings?.upgradePolicy) === "off" &&
+            (game.searchResultsAvailable ||
+              game.updateSearchResultsAvailable ||
+              game.packsSearchResultsAvailable)
+          ) {
+            await storage.updateGameSearchResultsByCategory(game.id, {
+              updates: false,
+              packs: false,
+            });
+            game = {
+              ...game,
+              searchResultsAvailable: false,
+              updateSearchResultsAvailable: false,
+              packsSearchResultsAvailable: false,
+            };
+          }
+          (await import("./socket.js")).notifyUser("gameUpdated", game.id);
+        }
+        return game;
+      },
+      {
+        invalid: "Invalid upgrade policy data",
+        log: "error updating game upgrade policy",
+        failure: "Failed to update upgrade policy",
       }
     )
   );
@@ -4493,6 +4587,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         rssEnabled,
         autoSearchEnabled,
         allowInsecureLan,
+        timeoutSeconds,
       } = req.body;
 
       if (!url || !apiKey) {
@@ -4520,6 +4615,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Mirror the form's opt-in, or testing a plain-HTTP LAN indexer always
         // fails with 401 because the key is withheld.
         allowInsecureLan: allowInsecureLan === true,
+        timeoutSeconds:
+          Number.isInteger(timeoutSeconds) && timeoutSeconds >= 1 && timeoutSeconds <= 300
+            ? timeoutSeconds
+            : null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -4603,12 +4702,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           offset: parseInt(offset as string) || 0,
         };
 
-        let results;
-        if (isUsenetProtocol(indexer.protocol)) {
-          results = await newznabClient.search(indexer, searchParams);
-        } else {
-          results = await torznabClient.searchGames(indexer, searchParams);
-        }
+        // Through the guard so a 429 from this endpoint starts (and respects) the indexer's cooldown.
+        const results = await guardedIndexerSearch<
+          NewznabResult[] | Awaited<ReturnType<typeof torznabClient.searchGames>>
+        >(
+          indexer.id,
+          JSON.stringify([
+            searchParams.query,
+            searchParams.category,
+            searchParams.limit,
+            searchParams.offset,
+          ]),
+          {},
+          (signal) =>
+            isUsenetProtocol(indexer.protocol)
+              ? newznabClient.search(indexer, searchParams, signal)
+              : torznabClient.searchGames(indexer, searchParams, signal)
+        );
         return res.json(results);
       } catch (error) {
         routesLogger.error({ error }, "error searching specific indexer");
@@ -5060,6 +5170,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Status a freshly linked download is stored with. A finished download claimed while
+  // post-processing is on must stay "downloading": the status tracker only polls that status,
+  // and its completion path is what runs the import. Storing "completed" here would leave the
+  // files in the client's folder with no import ever started (no game_files, nothing in the
+  // library folder).
+  const resolveClaimedDownloadStatus = (
+    currentStatus: string | undefined,
+    enablePostProcessing: boolean
+  ): "completed" | "downloading" | "paused" => {
+    if (currentStatus === "completed" || currentStatus === "seeding") {
+      return enablePostProcessing ? "downloading" : "completed";
+    }
+    return currentStatus === "paused" ? "paused" : "downloading";
+  };
+
   // Claim (link) a download client entry to a game in the library
   app.post("/api/downloads/claim", authenticateToken, async (req, res) => {
     try {
@@ -5092,14 +5217,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Determine download status for gameDownloads record
-      const downloadStatus =
-        currentStatus === "completed" || currentStatus === "seeding"
-          ? "completed"
-          : currentStatus === "downloading"
-            ? "downloading"
-            : currentStatus === "paused"
-              ? "paused"
-              : "downloading";
+      const importConfig = await storage.getImportConfig(userId);
+      const downloadStatus = resolveClaimedDownloadStatus(
+        currentStatus,
+        importConfig.enablePostProcessing
+      );
 
       let resolvedGameId: string | undefined = undefined;
 
@@ -5224,6 +5346,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let failedCount = 0;
     const taskItemsToInsert: InsertImportTaskItem[] = [];
     const igdbIdToGameId = new Map<number, string>();
+    const importConfig = await storage.getImportConfig(userId);
 
     for (const item of parsedItems) {
       const key = `${item.downloaderId}:${normalizeDownloadHash(item.downloadHash)}`;
@@ -5237,14 +5360,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         continue;
       }
       try {
-        const downloadStatus =
-          item.currentStatus === "completed" || item.currentStatus === "seeding"
-            ? "completed"
-            : item.currentStatus === "downloading"
-              ? "downloading"
-              : item.currentStatus === "paused"
-                ? "paused"
-                : "downloading";
+        const downloadStatus = resolveClaimedDownloadStatus(
+          item.currentStatus,
+          importConfig.enablePostProcessing
+        );
 
         let resolvedGameId: string | undefined;
 
@@ -5839,11 +5958,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Exposes only whether a Steam Web API key is configured server-side, so the
-  // client can conditionally show the achievements section in the game details
-  // Journal tab without ever seeing the key itself.
+  // Exposes only whether a Steam Web API key is configured server-side (and where it comes
+  // from), so the client can conditionally show the achievements section in the game details
+  // Journal tab and the Steam settings without ever seeing the key itself.
   app.get("/api/settings/steam", sensitiveEndpointLimiter, async (_req, res) => {
-    res.json({ apiKeyConfigured: appConfig.steam.isConfigured });
+    try {
+      res.json({
+        apiKeyConfigured: appConfig.steam.isConfigured,
+        source: await getSteamApiKeySource(),
+      });
+    } catch (error) {
+      routesLogger.error({ error }, "Failed to fetch Steam settings");
+      res.status(500).json({ error: "Failed to fetch Steam settings" });
+    }
+  });
+
+  // Save the Steam Web API key in Settings (it overrides STEAM_API_KEY); an empty value removes it.
+  app.post("/api/settings/steam", sensitiveEndpointLimiter, async (req, res) => {
+    try {
+      const { apiKey } = req.body as { apiKey?: unknown };
+      if (typeof apiKey !== "string") {
+        return res.status(400).json({ error: "apiKey must be a string" });
+      }
+      const trimmed = apiKey.trim();
+      if (trimmed && !/^[A-Za-z0-9]{16,128}$/.test(trimmed)) {
+        return res.status(400).json({
+          error: "That does not look like a Steam Web API key (letters and digits only).",
+        });
+      }
+      await saveSteamApiKey(trimmed || null);
+      routesLogger.info("Steam API key updated via settings");
+      return res.json({
+        apiKeyConfigured: appConfig.steam.isConfigured,
+        source: await getSteamApiKeySource(),
+      });
+    } catch (error) {
+      routesLogger.error({ error }, "Failed to update Steam settings");
+      return res.status(500).json({ error: "Failed to update Steam settings" });
+    }
   });
 
   app.post("/api/settings/discord", sensitiveEndpointLimiter, async (req, res) => {
@@ -6136,6 +6288,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!settings) {
         return res.status(404).json({ error: "Settings not found" });
+      }
+
+      // Auto-search's own cleanup only runs while it is enabled, so drop the update/pack badges
+      // of games that now follow an account default of "off" right away.
+      if (updates.upgradePolicy === "off") {
+        const userGames = await storage.getUserGames(userId, true, Array.from(OWNED_GAME_STATUSES));
+        for (const game of userGames) {
+          if (
+            (game.searchResultsAvailable ||
+              game.updateSearchResultsAvailable ||
+              game.packsSearchResultsAvailable) &&
+            resolveUpgradePolicy(game.upgradePolicy, settings.upgradePolicy) === "off"
+          ) {
+            await storage.updateGameSearchResultsByCategory(game.id, {
+              updates: false,
+              packs: false,
+            });
+          }
+        }
       }
 
       return res.json(settings);

@@ -6,11 +6,13 @@ import { isSafeUrl, resolveSafeAddress, safeFetch } from "../ssrf.js";
 import type { DownloadRequest, DownloaderClient } from "./types.js";
 import {
   assertCredentialsAllowed,
+  buildDownloaderBaseUrl,
+  findTorrentByTagNull,
   fixNzbUrlEncoding,
+  getErrorMessage,
   isHttpsUrl,
   logDownloaderDebugResponse,
   stripTrailingPathSeparators,
-  findTorrentByTagNull,
 } from "./utils.js";
 
 /**
@@ -103,21 +105,7 @@ export class SABnzbdClient implements DownloaderClient {
   }
 
   private getBaseUrl(): string {
-    let baseUrl = this.downloader.url;
-    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-      const protocol = this.downloader.useSsl ? "https://" : "http://";
-      baseUrl = protocol + baseUrl;
-    }
-
-    try {
-      const urlObj = new URL(baseUrl);
-      if (this.downloader.port) {
-        urlObj.port = this.downloader.port.toString();
-      }
-      return urlObj.toString().replace(/\/$/, "");
-    } catch {
-      return baseUrl.replace(/\/$/, "");
-    }
+    return buildDownloaderBaseUrl(this.downloader);
   }
 
   /**
@@ -284,7 +272,7 @@ export class SABnzbdClient implements DownloaderClient {
 
       return { success: false, message: "Invalid SABnzbd response - missing version field" };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       const baseUrl = this.getBaseUrl();
       downloadersLogger.error({ error, url: baseUrl }, "SABnzbd connection test failed");
       return {
@@ -425,7 +413,7 @@ export class SABnzbdClient implements DownloaderClient {
       const data = await response.json();
       return this.parseAddFileResponse(data);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return {
         success: false,
         message: `Failed to add NZB to SABnzbd: ${errorMessage}`,
@@ -735,7 +723,7 @@ export class SABnzbdClient implements DownloaderClient {
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: getErrorMessage(error),
       };
     }
   }
@@ -754,7 +742,7 @@ export class SABnzbdClient implements DownloaderClient {
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: getErrorMessage(error),
       };
     }
   }
@@ -776,7 +764,7 @@ export class SABnzbdClient implements DownloaderClient {
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: getErrorMessage(error),
       };
     }
   }

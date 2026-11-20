@@ -1393,6 +1393,15 @@ describe("Import And Mapping Helpers", () => {
     );
   });
 
+  it("should persist the upgrade replace mode in import config", async () => {
+    const user = await storage.createUser({ username: "replace-user", passwordHash: "hash" });
+    await storage.createUserSettings({ userId: user.id, upgradeReplaceMode: "archive" });
+
+    await expect(storage.getImportConfig(user.id)).resolves.toEqual(
+      expect.objectContaining({ upgradeReplaceMode: "archive" })
+    );
+  });
+
   it("clears game-file download references when removing a download", async () => {
     const game = await storage.addGame({
       title: "Download game",
@@ -1445,6 +1454,8 @@ describe("Import And Mapping Helpers", () => {
       libraryRoot: "/data",
       autoDeleteAfterImport: false,
       sortExtras: false,
+      upgradeReplaceMode: "off",
+      folderForSingleFiles: true,
     });
   });
 

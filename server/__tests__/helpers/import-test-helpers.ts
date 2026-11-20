@@ -29,6 +29,10 @@ export function makeGame(overrides: Partial<Game> = {}): Game {
     isAgeRestricted: false,
     libraryPath: null,
     installedVersion: null,
+    installedVersionSource: null,
+    finishBy: null,
+    upgradePolicy: null,
+    statusSyncSource: null,
     originalReleaseDate: null,
     releaseStatus: null,
     addedAt: null,
@@ -63,6 +67,8 @@ export function makeImportConfig(overrides: Partial<ImportConfig> = {}): ImportC
     libraryRoot: "/data",
     autoDeleteAfterImport: false,
     sortExtras: false,
+    upgradeReplaceMode: "off",
+    folderForSingleFiles: false,
     ...overrides,
   };
 }

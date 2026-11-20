@@ -52,6 +52,11 @@ import {
   type ApiKey,
   DEFAULT_API_KEY_SCOPE,
   type ApiKeyPublic,
+  type WebhookSubscription,
+  type WebhookDelivery,
+  type NewWebhookSubscriptionInput,
+  type UpdateWebhookSubscriptionInput,
+  type NewWebhookDeliveryInput,
   type NewApiKeyInput,
   type IntegrationRequest,
   type IntegrationRequestProvider,
@@ -72,14 +77,27 @@ import {
   type InsertCollection,
   type GameJournalEntry,
   type GamePlaySession,
+  EDITABLE_PLAY_SESSION_SOURCES,
+  isEditablePlaySession,
   type InsertGamePlaySession,
   type InsertGameJournalEntry,
   type GameMilestone,
   type InsertGameMilestone,
   type GameScreenshot,
+  type Tag,
+  type InsertTag,
+  type UpdateTag,
+  type GameTag,
+  type InsertGameTag,
+  type UpgradePolicy,
+  DEFAULT_UPGRADE_POLICY,
+  type DetectedVersionSource,
+  type GameStatusEvent,
 } from "../shared/schema.js";
 import {
   users,
+  webhookDeliveries,
+  webhookSubscriptions,
   games,
   indexers,
   downloaders,
@@ -109,9 +127,12 @@ import {
   gameJournalEntries,
   gameMilestones,
   gamePlaySessions,
+  gameStatusEvents,
   gameScreenshots,
   classificationCache,
   classificationCandidates,
+  tags,
+  gameTags,
 } from "./db/tables.js";
 import { randomUUID } from "crypto";
 import { db } from "./db.js";
@@ -131,13 +152,20 @@ import {
   count,
   isNull,
   isNotNull,
+  type SQL,
   gte,
   lt,
   lte,
+  exists,
 } from "drizzle-orm";
 import { containsCI, distinctJoin, affectedRows } from "./sql-compat.js";
-import { transactionalOps } from "./db/transactional-ops.js";
+import {
+  transactionalOps,
+  type ExpectedPlaySession,
+  type PlaySessionReplacement,
+} from "./db/transactional-ops.js";
 import { categorizeDownload } from "../shared/download-categorizer.js";
+import { canAutoWriteVersion } from "../shared/version-utils.js";
 import { firstOrThrow, stripUndefined } from "./object-utils.js";
 import {
   encryptCredential,
@@ -182,6 +210,8 @@ function buildImportConfigFromSettings(
     | "libraryRoot"
     | "autoDeleteAfterImport"
     | "sortExtras"
+    | "upgradeReplaceMode"
+    | "folderForSingleFiles"
   >
 ): ImportConfig {
   const parsed = importConfigSchema.safeParse({
@@ -196,6 +226,8 @@ function buildImportConfigFromSettings(
     libraryRoot: settings?.libraryRoot ?? "/data",
     autoDeleteAfterImport: settings?.autoDeleteAfterImport ?? false,
     sortExtras: settings?.sortExtras ?? false,
+    upgradeReplaceMode: settings?.upgradeReplaceMode ?? "off",
+    folderForSingleFiles: settings?.folderForSingleFiles ?? true,
   });
 
   if (parsed.success) return parsed.data;
@@ -212,6 +244,8 @@ function buildImportConfigFromSettings(
     libraryRoot: settings?.libraryRoot ?? "/data",
     autoDeleteAfterImport: settings?.autoDeleteAfterImport ?? false,
     sortExtras: settings?.sortExtras ?? false,
+    upgradeReplaceMode: "off",
+    folderForSingleFiles: settings?.folderForSingleFiles ?? true,
   };
 }
 
@@ -270,11 +304,17 @@ export interface IStorage {
    * completed), checked in the same statement so a status the user picks while
    * a download or import is running can't be overwritten by the pipeline.
    * Returns undefined when nothing was updated.
+   *
+   * With `syncSource`, the write comes from a library sync (e.g. Playnite): it is recorded as
+   * `statusSyncSource` and only applies while the current status is not a user-curated one set
+   * by hand, again checked in the same statement. Any write without it clears `statusSyncSource`,
+   * so a status the user picks afterwards is protected from the next sync. A sync write also never
+   * touches a game that is downloading, nor a wanted one unless `allowWanted` is set.
    */
   updateGameStatus(
     id: string,
     statusUpdate: UpdateGameStatus,
-    options?: { preserveCurated?: boolean }
+    options?: { preserveCurated?: boolean; syncSource?: string; allowWanted?: boolean }
   ): Promise<Game | undefined>;
   updateGameHidden(id: string, hidden: boolean): Promise<Game | undefined>;
   updateGameUserRating(
@@ -282,20 +322,34 @@ export interface IStorage {
     userId: string,
     userRating: number | null
   ): Promise<Game | undefined>;
+  updateGameFinishBy(
+    id: string,
+    userId: string,
+    finishBy: string | null
+  ): Promise<Game | undefined>;
   updateGameInstalledVersion(
     id: string,
     userId: string,
     installedVersion: string | null
   ): Promise<Game | undefined>;
   /**
-   * Sets a game's installed version only if it still equals `expected` (null = not set), so a
-   * detected version can't overwrite one written in between. Returns whether it was written.
+   * Sets a game's detected installed version only if it still equals `expected` (null = not
+   * set) and was not typed by the user, so a detected version can't overwrite one written in
+   * between. `overManual` lets the caller replace a typed version too; it is for a version the
+   * caller has already compared and found strictly newer. Returns whether it was written.
    */
   replaceGameInstalledVersion(
     id: string,
     expected: string | null,
-    installedVersion: string
+    installedVersion: string,
+    source?: DetectedVersionSource,
+    overManual?: boolean
   ): Promise<boolean>;
+  updateGameUpgradePolicy(
+    id: string,
+    userId: string,
+    upgradePolicy: UpgradePolicy | null
+  ): Promise<Game | undefined>;
   updateGameSearchResultsAvailable(gameId: string, available: boolean): Promise<void>;
   updateGameSearchResultsByCategory(
     gameId: string,
@@ -323,6 +377,19 @@ export interface IStorage {
   addGameToCollection(collectionId: string, gameId: string): Promise<boolean>;
   removeGameFromCollection(collectionId: string, gameId: string): Promise<boolean>;
 
+  // Tag methods (user-defined labels for games)
+  getTags(userId: string): Promise<Tag[]>;
+  getTag(id: string, userId: string): Promise<Tag | undefined>;
+  createTag(tag: InsertTag & { userId: string }): Promise<Tag>;
+  updateTag(id: string, userId: string, patch: UpdateTag): Promise<Tag | undefined>;
+  deleteTag(id: string, userId: string): Promise<boolean>;
+  getGameTags(gameId: string): Promise<GameTag[]>;
+  getGamesByTag(tagId: string, userId: string): Promise<string[]>;
+  getTagsByIds(tagIds: string[]): Promise<Tag[]>;
+  getGamesByIds(gameIds: string[]): Promise<Game[]>;
+  addTagToGame(gameTag: InsertGameTag): Promise<GameTag>;
+  removeTagFromGame(gameId: string, tagId: string): Promise<boolean>;
+
   // Game journal methods (local-only notes while playing)
   getGameJournalEntries(gameId: string, userId: string): Promise<GameJournalEntry[]>;
   addGameJournalEntry(entry: InsertGameJournalEntry): Promise<GameJournalEntry>;
@@ -331,6 +398,8 @@ export interface IStorage {
   // Play session methods (time spent per game: manual entries and a start/stop timer)
   getGamePlaySessions(gameId: string, userId: string): Promise<GamePlaySession[]>;
   getUserPlaySessions(userId: string): Promise<GamePlaySession[]>;
+  /** The user's status history (one row per status change), oldest first. */
+  getUserGameStatusEvents(userId: string): Promise<GameStatusEvent[]>;
   /** The user's running timer (a session with no end), if any. */
   getRunningPlaySession(userId: string): Promise<GamePlaySession | undefined>;
   addGamePlaySession(
@@ -343,6 +412,21 @@ export interface IStorage {
     endedAt: Date
   ): Promise<GamePlaySession | undefined>;
   deleteGamePlaySession(id: string, gameId: string, userId: string): Promise<boolean>;
+  /** Moves a finished manual or timer session; `undefined` if it is missing, running or imported. */
+  updateGamePlaySession(
+    id: string,
+    gameId: string,
+    userId: string,
+    times: { startedAt: Date; endedAt: Date },
+    expected: { startedAt: Date; endedAt: Date }
+  ): Promise<GamePlaySession | undefined>;
+  /** Swaps finished manual or timer sessions for new ones in one transaction (merge, split). */
+  replaceGamePlaySessions(
+    userId: string,
+    gameId: string,
+    expected: ExpectedPlaySession[],
+    replacements: PlaySessionReplacement[]
+  ): Promise<GamePlaySession[] | undefined>;
 
   // Game milestone methods (manual "successes" checklist)
   getGameMilestones(gameId: string, userId: string): Promise<GameMilestone[]>;
@@ -610,6 +694,25 @@ export interface IStorage {
   touchApiKey(id: string): Promise<void>;
   removeApiKey(id: string, userId: string): Promise<boolean>;
 
+  // Outbound webhooks. Subscription reads return the stored (encrypted) secret: only the
+  // dispatcher uses it; routes must strip it with toPublicWebhookSubscription.
+  getWebhookSubscriptions(userId: string): Promise<WebhookSubscription[]>;
+  getWebhookSubscription(id: string, userId: string): Promise<WebhookSubscription | undefined>;
+  /** Enabled subscriptions across all users, for event dispatch. */
+  getEnabledWebhookSubscriptions(): Promise<WebhookSubscription[]>;
+  addWebhookSubscription(input: NewWebhookSubscriptionInput): Promise<WebhookSubscription>;
+  updateWebhookSubscription(
+    id: string,
+    userId: string,
+    patch: UpdateWebhookSubscriptionInput
+  ): Promise<WebhookSubscription | undefined>;
+  removeWebhookSubscription(id: string, userId: string): Promise<boolean>;
+  addWebhookDelivery(input: NewWebhookDeliveryInput): Promise<WebhookDelivery>;
+  /** Newest first. */
+  getWebhookDeliveries(subscriptionId: string, limit: number): Promise<WebhookDelivery[]>;
+  /** Keeps the newest `keepPerSubscription` attempts of each subscription; returns rows removed. */
+  pruneWebhookDeliveries(keepPerSubscription: number): Promise<number>;
+
   // External request ledger (SeerrNG), always scoped to the owning user.
   getIntegrationRequest(
     userId: string,
@@ -664,12 +767,17 @@ export class MemStorage implements IStorage {
   private classificationCandidates: Map<string, ClassificationCandidate>;
   private classificationCacheRows: Map<string, ClassificationCacheRow>;
   private apiKeys: Map<string, ApiKey>;
+  private webhookSubscriptionRows: Map<string, WebhookSubscription>;
+  private webhookDeliveryRows: Map<string, WebhookDelivery>;
   private integrationRequests: Map<string, IntegrationRequest>;
   private collections: Map<string, Collection>;
   private collectionGames: Map<string, { id: string; collectionId: string; gameId: string }>;
+  private tags: Map<string, Tag>;
+  private gameTags: Map<string, GameTag>;
   private gameJournalEntries: Map<string, GameJournalEntry>;
   private gameMilestones: Map<string, GameMilestone>;
   private gamePlaySessions: Map<string, GamePlaySession>;
+  private gameStatusEvents: GameStatusEvent[];
   private gameScreenshots: Map<string, GameScreenshot>;
 
   constructor() {
@@ -696,13 +804,18 @@ export class MemStorage implements IStorage {
     this.ignoredScanFolders = new Map();
     this.classificationCandidates = new Map();
     this.classificationCacheRows = new Map();
+    this.webhookSubscriptionRows = new Map();
+    this.webhookDeliveryRows = new Map();
     this.apiKeys = new Map();
     this.integrationRequests = new Map();
     this.collections = new Map();
     this.collectionGames = new Map();
+    this.tags = new Map();
+    this.gameTags = new Map();
     this.gameJournalEntries = new Map();
     this.gameMilestones = new Map();
     this.gamePlaySessions = new Map();
+    this.gameStatusEvents = [];
     this.gameScreenshots = new Map();
   }
 
@@ -831,6 +944,7 @@ export class MemStorage implements IStorage {
       id,
       userId: insertGame.userId || null,
       status: insertGame.status || "wanted",
+      statusSyncSource: null,
       hidden: insertGame.hidden ?? false, // Convert boolean to number or keep as boolean depending on memory usage
       isAdultContent: insertGame.isAdultContent ?? false,
       isAgeRestricted: insertGame.isAgeRestricted ?? false,
@@ -867,27 +981,52 @@ export class MemStorage implements IStorage {
       userRating: null,
       libraryPath: null,
       installedVersion: null,
+      installedVersionSource: null,
+      upgradePolicy: null,
+      finishBy: null,
       addedAt: new Date(),
       completedAt: null,
     };
     this.games.set(id, game);
+    this.recordStatusEvent(game);
     return game;
+  }
+
+  private recordStatusEvent(game: Game): void {
+    if (!game.userId) return;
+    this.gameStatusEvents.push({
+      id: randomUUID(),
+      gameId: game.id,
+      userId: game.userId,
+      status: game.status,
+      createdAt: new Date(),
+    });
+  }
+
+  async getUserGameStatusEvents(userId: string): Promise<GameStatusEvent[]> {
+    return this.gameStatusEvents.filter((e) => e.userId === userId);
   }
 
   async updateGameStatus(
     id: string,
     statusUpdate: UpdateGameStatus,
-    options?: { preserveCurated?: boolean }
+    options?: { preserveCurated?: boolean; syncSource?: string; allowWanted?: boolean }
   ): Promise<Game | undefined> {
     const game = this.games.get(id);
     if (!game) return undefined;
     if (options?.preserveCurated && isUserCuratedGameStatus(game.status)) return undefined;
+    if (options?.syncSource) {
+      if (game.status === "downloading") return undefined;
+      if (game.status === "wanted" && !options.allowWanted) return undefined;
+      if (isUserCuratedGameStatus(game.status) && game.statusSyncSource === null) return undefined;
+    }
 
     const leavingWanted = game.status === "wanted" && statusUpdate.status !== "wanted";
 
     const updatedGame: Game = {
       ...game,
       status: statusUpdate.status,
+      statusSyncSource: options?.syncSource ?? null,
       completedAt: statusUpdate.status === "completed" ? new Date() : null,
       ...(leavingWanted
         ? {
@@ -899,6 +1038,7 @@ export class MemStorage implements IStorage {
     };
 
     this.games.set(id, updatedGame);
+    if (game.status !== updatedGame.status) this.recordStatusEvent(updatedGame);
     return updatedGame;
   }
 
@@ -928,6 +1068,32 @@ export class MemStorage implements IStorage {
     return updatedGame;
   }
 
+  async updateGameFinishBy(
+    id: string,
+    userId: string,
+    finishBy: string | null
+  ): Promise<Game | undefined> {
+    const game = this.games.get(id);
+    if (!game || game.userId !== userId) return undefined;
+
+    const updatedGame: Game = { ...game, finishBy };
+    this.games.set(id, updatedGame);
+    return updatedGame;
+  }
+
+  updateGameUpgradePolicy(
+    id: string,
+    userId: string,
+    upgradePolicy: UpgradePolicy | null
+  ): Promise<Game | undefined> {
+    const game = this.games.get(id);
+    if (game?.userId !== userId) return Promise.resolve(undefined);
+
+    const updatedGame: Game = { ...game, upgradePolicy };
+    this.games.set(id, updatedGame);
+    return Promise.resolve(updatedGame);
+  }
+
   updateGameInstalledVersion(
     id: string,
     userId: string,
@@ -936,7 +1102,12 @@ export class MemStorage implements IStorage {
     const game = this.games.get(id);
     if (game?.userId !== userId) return Promise.resolve(undefined);
 
-    const updatedGame: Game = { ...game, installedVersion };
+    // A version typed by the user is "manual"; clearing it clears the source too.
+    const updatedGame: Game = {
+      ...game,
+      installedVersion,
+      installedVersionSource: installedVersion ? "manual" : null,
+    };
     this.games.set(id, updatedGame);
     return Promise.resolve(updatedGame);
   }
@@ -944,11 +1115,19 @@ export class MemStorage implements IStorage {
   replaceGameInstalledVersion(
     id: string,
     expected: string | null,
-    installedVersion: string
+    installedVersion: string,
+    source: DetectedVersionSource = "release",
+    overManual = false
   ): Promise<boolean> {
     const game = this.games.get(id);
-    if (!game || (game.installedVersion ?? null) !== expected) return Promise.resolve(false);
-    this.games.set(id, { ...game, installedVersion });
+    if (
+      !game ||
+      (game.installedVersion ?? null) !== expected ||
+      (!overManual && !canAutoWriteVersion(game))
+    ) {
+      return Promise.resolve(false);
+    }
+    this.games.set(id, { ...game, installedVersion, installedVersionSource: source });
     return Promise.resolve(true);
   }
 
@@ -1022,6 +1201,104 @@ export class MemStorage implements IStorage {
     for (const [id, link] of this.collectionGames) {
       if (link.collectionId === collectionId && link.gameId === gameId) {
         return this.collectionGames.delete(id);
+      }
+    }
+    return false;
+  }
+
+  // Tag methods (SQLite implementation)
+  async getTags(userId: string): Promise<Tag[]> {
+    return Array.from(this.tags.values())
+      .filter((tag) => tag.userId === userId)
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  }
+
+  async getTag(id: string, userId: string): Promise<Tag | undefined> {
+    const tag = this.tags.get(id);
+    return tag?.userId === userId ? tag : undefined;
+  }
+
+  async createTag(tag: InsertTag & { userId: string }): Promise<Tag> {
+    const id = randomUUID();
+    const now = new Date();
+    const newTag: Tag = {
+      id,
+      userId: tag.userId,
+      name: tag.name,
+      color: tag.color,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.tags.set(id, newTag);
+    return newTag;
+  }
+
+  async updateTag(id: string, userId: string, patch: UpdateTag): Promise<Tag | undefined> {
+    const existing = this.tags.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: Tag = {
+      ...existing,
+      ...patch,
+      id,
+      name: patch.name ?? existing.name,
+      color: patch.color ?? existing.color,
+      updatedAt: new Date(),
+    };
+    this.tags.set(id, updated);
+    return updated;
+  }
+
+  async deleteTag(id: string, userId: string): Promise<boolean> {
+    const tag = this.tags.get(id);
+    if (!tag || tag.userId !== userId) return false;
+    // Remove all game_tags that reference this tag
+    for (const [gtId, gt] of this.gameTags) {
+      if (gt.tagId === id) {
+        this.gameTags.delete(gtId);
+      }
+    }
+    return this.tags.delete(id);
+  }
+
+  async getGameTags(gameId: string): Promise<GameTag[]> {
+    return Array.from(this.gameTags.values())
+      .filter((gt) => gt.gameId === gameId)
+      .map(({ id, gameId, tagId, addedAt }) => ({ id, gameId, tagId, addedAt }));
+  }
+
+  async getGamesByTag(tagId: string, userId: string): Promise<string[]> {
+    const tag = this.tags.get(tagId);
+    if (!tag || tag.userId !== userId) return [];
+    return Array.from(this.gameTags.values())
+      .filter((gt) => gt.tagId === tagId)
+      .map((gt) => gt.gameId);
+  }
+
+  async getTagsByIds(tagIds: string[]): Promise<Tag[]> {
+    return Array.from(this.tags.values()).filter((tag) => tagIds.includes(tag.id));
+  }
+
+  async getGamesByIds(gameIds: string[]): Promise<Game[]> {
+    return Array.from(this.games.values()).filter((game) => gameIds.includes(game.id));
+  }
+
+  async addTagToGame(gameTag: InsertGameTag): Promise<GameTag> {
+    const id = randomUUID();
+    const now = new Date();
+    const newGameTag: GameTag = {
+      id,
+      gameId: gameTag.gameId,
+      tagId: gameTag.tagId,
+      addedAt: now,
+    };
+    this.gameTags.set(id, newGameTag);
+    return newGameTag;
+  }
+
+  async removeTagFromGame(gameId: string, tagId: string): Promise<boolean> {
+    for (const [id, gt] of this.gameTags) {
+      if (gt.gameId === gameId && gt.tagId === tagId) {
+        return this.gameTags.delete(id);
       }
     }
     return false;
@@ -1101,6 +1378,49 @@ export class MemStorage implements IStorage {
     const session = this.gamePlaySessions.get(id);
     if (session?.gameId !== gameId || session.userId !== userId) return false;
     return this.gamePlaySessions.delete(id);
+  }
+
+  async updateGamePlaySession(
+    id: string,
+    gameId: string,
+    userId: string,
+    times: { startedAt: Date; endedAt: Date },
+    expected: { startedAt: Date; endedAt: Date }
+  ): Promise<GamePlaySession | undefined> {
+    const session = this.gamePlaySessions.get(id);
+    if (session?.gameId !== gameId || session.userId !== userId) return undefined;
+    if (!isEditablePlaySession(session)) return undefined;
+    if (
+      session.startedAt.getTime() !== expected.startedAt.getTime() ||
+      session.endedAt?.getTime() !== expected.endedAt.getTime()
+    ) {
+      return undefined;
+    }
+    const updated = { ...session, ...times };
+    this.gamePlaySessions.set(id, updated);
+    return updated;
+  }
+
+  async replaceGamePlaySessions(
+    userId: string,
+    gameId: string,
+    expected: ExpectedPlaySession[],
+    replacements: PlaySessionReplacement[]
+  ): Promise<GamePlaySession[] | undefined> {
+    const unique = new Map(expected.map((e) => [e.id, e]));
+    const valid = Array.from(unique.values()).every((e) => {
+      const s = this.gamePlaySessions.get(e.id);
+      return (
+        s?.gameId === gameId &&
+        s.userId === userId &&
+        isEditablePlaySession(s) &&
+        s.startedAt.getTime() === e.startedAt.getTime() &&
+        s.endedAt?.getTime() === e.endedAt.getTime()
+      );
+    });
+    if (!valid) return undefined;
+    for (const id of unique.keys()) this.gamePlaySessions.delete(id);
+    return Promise.all(replacements.map((r) => this.addGamePlaySession({ gameId, userId, ...r })));
   }
 
   async getGameMilestones(gameId: string, userId: string): Promise<GameMilestone[]> {
@@ -1303,6 +1623,7 @@ export class MemStorage implements IStorage {
       rssEnabled: insertIndexer.rssEnabled ?? true,
       autoSearchEnabled: insertIndexer.autoSearchEnabled ?? true,
       allowInsecureLan: insertIndexer.allowInsecureLan ?? false,
+      timeoutSeconds: insertIndexer.timeoutSeconds ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -1380,6 +1701,7 @@ export class MemStorage implements IStorage {
             rssEnabled: idx.rssEnabled ?? true,
             autoSearchEnabled: idx.autoSearchEnabled ?? true,
             allowInsecureLan: idx.allowInsecureLan ?? false,
+            timeoutSeconds: idx.timeoutSeconds ?? null,
             createdAt: new Date(),
             updatedAt: new Date(),
           };
@@ -1892,6 +2214,7 @@ export class MemStorage implements IStorage {
       xrelSceneReleases: insertSettings.xrelSceneReleases ?? true,
       xrelP2pReleases: insertSettings.xrelP2pReleases ?? false,
       autoSearchUnreleased: insertSettings.autoSearchUnreleased ?? false,
+      upgradePolicy: insertSettings.upgradePolicy ?? DEFAULT_UPGRADE_POLICY,
       steamSyncFailures: 0,
       steamSyncEnabled: insertSettings.steamSyncEnabled ?? false,
       steamSyncIntervalHours: insertSettings.steamSyncIntervalHours ?? 24,
@@ -1909,6 +2232,8 @@ export class MemStorage implements IStorage {
       libraryRoot: insertSettings.libraryRoot ?? "/data",
       autoDeleteAfterImport: insertSettings.autoDeleteAfterImport ?? false,
       sortExtras: insertSettings.sortExtras ?? false,
+      upgradeReplaceMode: insertSettings.upgradeReplaceMode ?? "off",
+      folderForSingleFiles: insertSettings.folderForSingleFiles ?? true,
 
       preferredReleaseGroups: insertSettings.preferredReleaseGroups ?? null,
       filterByPreferredGroups: insertSettings.filterByPreferredGroups ?? false,
@@ -2674,6 +2999,87 @@ export class MemStorage implements IStorage {
     return this.apiKeys.delete(id);
   }
 
+  async getWebhookSubscriptions(userId: string): Promise<WebhookSubscription[]> {
+    return Array.from(this.webhookSubscriptionRows.values())
+      .filter((s) => s.userId === userId)
+      .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
+  }
+
+  async getWebhookSubscription(
+    id: string,
+    userId: string
+  ): Promise<WebhookSubscription | undefined> {
+    const row = this.webhookSubscriptionRows.get(id);
+    return row && row.userId === userId ? row : undefined;
+  }
+
+  async getEnabledWebhookSubscriptions(): Promise<WebhookSubscription[]> {
+    return Array.from(this.webhookSubscriptionRows.values()).filter((s) => s.enabled);
+  }
+
+  async addWebhookSubscription(input: NewWebhookSubscriptionInput): Promise<WebhookSubscription> {
+    const now = new Date();
+    const row: WebhookSubscription = {
+      id: randomUUID(),
+      userId: input.userId,
+      name: input.name,
+      url: input.url,
+      secret: input.secret,
+      events: input.events,
+      enabled: input.enabled ?? true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.webhookSubscriptionRows.set(row.id, row);
+    return row;
+  }
+
+  async updateWebhookSubscription(
+    id: string,
+    userId: string,
+    patch: UpdateWebhookSubscriptionInput
+  ): Promise<WebhookSubscription | undefined> {
+    const existing = await this.getWebhookSubscription(id, userId);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...stripUndefined(patch), updatedAt: new Date() };
+    this.webhookSubscriptionRows.set(id, updated);
+    return updated;
+  }
+
+  async removeWebhookSubscription(id: string, userId: string): Promise<boolean> {
+    const existing = await this.getWebhookSubscription(id, userId);
+    if (!existing) return false;
+    this.webhookSubscriptionRows.delete(id);
+    for (const [deliveryId, d] of this.webhookDeliveryRows) {
+      if (d.subscriptionId === id) this.webhookDeliveryRows.delete(deliveryId);
+    }
+    return true;
+  }
+
+  async addWebhookDelivery(input: NewWebhookDeliveryInput): Promise<WebhookDelivery> {
+    const row: WebhookDelivery = { ...input, id: randomUUID(), createdAt: new Date() };
+    this.webhookDeliveryRows.set(row.id, row);
+    return row;
+  }
+
+  async getWebhookDeliveries(subscriptionId: string, limit: number): Promise<WebhookDelivery[]> {
+    return Array.from(this.webhookDeliveryRows.values())
+      .filter((d) => d.subscriptionId === subscriptionId)
+      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))
+      .slice(0, limit);
+  }
+
+  async pruneWebhookDeliveries(keepPerSubscription: number): Promise<number> {
+    let removed = 0;
+    for (const sub of this.webhookSubscriptionRows.values()) {
+      const rows = await this.getWebhookDeliveries(sub.id, Number.MAX_SAFE_INTEGER);
+      for (const stale of rows.slice(keepPerSubscription)) {
+        if (this.webhookDeliveryRows.delete(stale.id)) removed++;
+      }
+    }
+    return removed;
+  }
+
   private integrationRequestKey(
     userId: string,
     provider: IntegrationRequestProvider,
@@ -3037,21 +3443,71 @@ export class DatabaseStorage implements IStorage {
     };
 
     const rows = await db.insert(games).values(gameWithId).returning();
-    return firstOrThrow(rows);
+    const created = firstOrThrow(rows);
+    await this.recordStatusEvent(created);
+    return created;
+  }
+
+  /** Writes one status-history row; a game with no owner has no history. */
+  private async recordStatusEvent(game: Game): Promise<void> {
+    if (!game.userId) return;
+    try {
+      await db.insert(gameStatusEvents).values({
+        id: randomUUID(),
+        gameId: game.id,
+        userId: game.userId,
+        status: game.status,
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      // The history is a nice-to-have; never fail the status change because of it.
+      logger.warn({ error, gameId: game.id }, "Could not record the game status change");
+    }
+  }
+
+  async getUserGameStatusEvents(userId: string): Promise<GameStatusEvent[]> {
+    return db
+      .select()
+      .from(gameStatusEvents)
+      .where(eq(gameStatusEvents.userId, userId))
+      .orderBy(asc(gameStatusEvents.createdAt), asc(gameStatusEvents.id));
   }
 
   async updateGameStatus(
     id: string,
     statusUpdate: UpdateGameStatus,
-    options?: { preserveCurated?: boolean }
+    options?: { preserveCurated?: boolean; syncSource?: string; allowWanted?: boolean }
   ): Promise<Game | undefined> {
     const existingGame = await this.getGame(id);
     const leavingWanted = existingGame?.status === "wanted" && statusUpdate.status !== "wanted";
+
+    // Every applicable guard is checked in the UPDATE itself, so a status the user picks while a
+    // pipeline or a sync runs is never overwritten.
+    const guards: SQL[] = [eq(games.id, id)];
+    if (options?.syncSource) {
+      guards.push(
+        not(
+          inArray(games.status, options.allowWanted ? ["downloading"] : ["downloading", "wanted"])
+        )
+      );
+    }
+    if (options?.preserveCurated) {
+      guards.push(not(inArray(games.status, [...USER_CURATED_GAME_STATUSES])));
+    } else if (options?.syncSource) {
+      // A curated status only yields to a sync when an earlier sync wrote it.
+      guards.push(
+        or(
+          not(inArray(games.status, [...USER_CURATED_GAME_STATUSES])),
+          isNotNull(games.statusSyncSource)
+        )!
+      );
+    }
 
     const [updatedGame] = await db
       .update(games)
       .set({
         status: statusUpdate.status,
+        statusSyncSource: options?.syncSource ?? null,
         completedAt: statusUpdate.status === "completed" ? new Date() : null,
         ...(leavingWanted
           ? {
@@ -3061,13 +3517,12 @@ export class DatabaseStorage implements IStorage {
             }
           : {}),
       })
-      .where(
-        options?.preserveCurated
-          ? and(eq(games.id, id), not(inArray(games.status, [...USER_CURATED_GAME_STATUSES])))
-          : eq(games.id, id)
-      )
+      .where(and(...guards))
       .returning();
 
+    if (updatedGame && existingGame?.status !== updatedGame.status) {
+      await this.recordStatusEvent(updatedGame);
+    }
     return updatedGame || undefined;
   }
 
@@ -3093,6 +3548,32 @@ export class DatabaseStorage implements IStorage {
     return updatedGame || undefined;
   }
 
+  async updateGameFinishBy(
+    id: string,
+    userId: string,
+    finishBy: string | null
+  ): Promise<Game | undefined> {
+    const [updatedGame] = await db
+      .update(games)
+      .set({ finishBy })
+      .where(and(eq(games.id, id), eq(games.userId, userId)))
+      .returning();
+    return updatedGame || undefined;
+  }
+
+  async updateGameUpgradePolicy(
+    id: string,
+    userId: string,
+    upgradePolicy: UpgradePolicy | null
+  ): Promise<Game | undefined> {
+    const [updatedGame] = await db
+      .update(games)
+      .set({ upgradePolicy })
+      .where(and(eq(games.id, id), eq(games.userId, userId)))
+      .returning();
+    return updatedGame || undefined;
+  }
+
   async updateGameInstalledVersion(
     id: string,
     userId: string,
@@ -3100,7 +3581,8 @@ export class DatabaseStorage implements IStorage {
   ): Promise<Game | undefined> {
     const [updatedGame] = await db
       .update(games)
-      .set({ installedVersion })
+      // A version typed by the user is "manual"; clearing it clears the source too.
+      .set({ installedVersion, installedVersionSource: installedVersion ? "manual" : null })
       .where(and(eq(games.id, id), eq(games.userId, userId)))
       .returning();
     return updatedGame || undefined;
@@ -3109,14 +3591,22 @@ export class DatabaseStorage implements IStorage {
   async replaceGameInstalledVersion(
     id: string,
     expected: string | null,
-    installedVersion: string
+    installedVersion: string,
+    source: DetectedVersionSource = "release",
+    overManual = false
   ): Promise<boolean> {
     const current =
       expected === null ? isNull(games.installedVersion) : eq(games.installedVersion, expected);
+    // Never over a version the user typed (or a legacy one with no source recorded), unless the
+    // caller found the new one strictly newer (overManual); `current` still guards the race.
+    const notManual = or(
+      inArray(games.installedVersionSource, ["release", "install"]),
+      and(isNull(games.installedVersionSource), isNull(games.installedVersion))
+    );
     const result = await db
       .update(games)
-      .set({ installedVersion })
-      .where(and(eq(games.id, id), current));
+      .set({ installedVersion, installedVersionSource: source })
+      .where(and(eq(games.id, id), current, overManual ? undefined : notManual));
     return affectedRows(result) > 0;
   }
 
@@ -3209,6 +3699,117 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(eq(collectionGames.collectionId, collectionId), eq(collectionGames.gameId, gameId))
       )
+      .returning();
+    return result.length > 0;
+  }
+
+  // Tag methods (DatabaseStorage implementation)
+  async getTags(userId: string): Promise<Tag[]> {
+    return db.select().from(tags).where(eq(tags.userId, userId)).orderBy(asc(tags.name));
+  }
+
+  async getTag(id: string, userId: string): Promise<Tag | undefined> {
+    const result = await db
+      .select()
+      .from(tags)
+      .where(and(eq(tags.id, id), eq(tags.userId, userId)))
+      .limit(1);
+    return result[0];
+  }
+
+  async createTag(tag: InsertTag & { userId: string }): Promise<Tag> {
+    const now = new Date();
+    const rows = await db
+      .insert(tags)
+      .values({
+        id: randomUUID(),
+        userId: tag.userId,
+        name: tag.name,
+        color: tag.color,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    return firstOrThrow(rows);
+  }
+
+  async updateTag(id: string, userId: string, patch: UpdateTag): Promise<Tag | undefined> {
+    const result = await db
+      .update(tags)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(tags.id, id), eq(tags.userId, userId)))
+      .returning();
+    return result[0];
+  }
+
+  async deleteTag(id: string, userId: string): Promise<boolean> {
+    // First, delete all game_tags that reference this tag
+    await db.delete(gameTags).where(
+      and(
+        eq(gameTags.tagId, id),
+        exists(
+          db
+            .select()
+            .from(tags)
+            .where(and(eq(tags.id, id), eq(tags.userId, userId)))
+        )
+      )
+    );
+
+    const result = await db
+      .delete(tags)
+      .where(and(eq(tags.id, id), eq(tags.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async getGameTags(gameId: string): Promise<GameTag[]> {
+    return db.select().from(gameTags).where(eq(gameTags.gameId, gameId));
+  }
+
+  async getGamesByTag(tagId: string, userId: string): Promise<string[]> {
+    const result = await db
+      .select({ gameId: gameTags.gameId })
+      .from(gameTags)
+      .where(
+        and(
+          eq(gameTags.tagId, tagId),
+          exists(
+            db
+              .select()
+              .from(tags)
+              .where(and(eq(tags.id, tagId), eq(tags.userId, userId)))
+          )
+        )
+      );
+    return result.map((row) => row.gameId);
+  }
+
+  async getTagsByIds(tagIds: string[]): Promise<Tag[]> {
+    return db.select().from(tags).where(inArray(tags.id, tagIds));
+  }
+
+  async getGamesByIds(gameIds: string[]): Promise<Game[]> {
+    return db.select().from(games).where(inArray(games.id, gameIds));
+  }
+
+  async addTagToGame(gameTag: InsertGameTag): Promise<GameTag> {
+    const rows = await db
+      .insert(gameTags)
+      .values({
+        id: randomUUID(),
+        gameId: gameTag.gameId,
+        tagId: gameTag.tagId,
+        addedAt: new Date(),
+      })
+      .returning();
+    return firstOrThrow(rows);
+  }
+
+  async removeTagFromGame(gameId: string, tagId: string): Promise<boolean> {
+    const result = await db
+      .delete(gameTags)
+      .where(and(eq(gameTags.gameId, gameId), eq(gameTags.tagId, tagId)))
       .returning();
     return result.length > 0;
   }
@@ -3309,6 +3910,39 @@ export class DatabaseStorage implements IStorage {
       )
       .returning();
     return result.length > 0;
+  }
+
+  async updateGamePlaySession(
+    id: string,
+    gameId: string,
+    userId: string,
+    times: { startedAt: Date; endedAt: Date },
+    expected: { startedAt: Date; endedAt: Date }
+  ): Promise<GamePlaySession | undefined> {
+    const rows = await db
+      .update(gamePlaySessions)
+      .set(times)
+      .where(
+        and(
+          eq(gamePlaySessions.id, id),
+          eq(gamePlaySessions.gameId, gameId),
+          eq(gamePlaySessions.userId, userId),
+          eq(gamePlaySessions.startedAt, expected.startedAt),
+          eq(gamePlaySessions.endedAt, expected.endedAt),
+          inArray(gamePlaySessions.source, [...EDITABLE_PLAY_SESSION_SOURCES])
+        )
+      )
+      .returning();
+    return rows[0];
+  }
+
+  async replaceGamePlaySessions(
+    userId: string,
+    gameId: string,
+    expected: ExpectedPlaySession[],
+    replacements: PlaySessionReplacement[]
+  ): Promise<GamePlaySession[] | undefined> {
+    return transactionalOps.replaceGamePlaySessions(userId, gameId, expected, replacements);
   }
 
   async getGameMilestones(gameId: string, userId: string): Promise<GameMilestone[]> {
@@ -5073,6 +5707,99 @@ export class DatabaseStorage implements IStorage {
       .delete(apiKeys)
       .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
     return affectedRows(result) > 0;
+  }
+
+  async getWebhookSubscriptions(userId: string): Promise<WebhookSubscription[]> {
+    return db
+      .select()
+      .from(webhookSubscriptions)
+      .where(eq(webhookSubscriptions.userId, userId))
+      .orderBy(asc(webhookSubscriptions.createdAt));
+  }
+
+  async getWebhookSubscription(
+    id: string,
+    userId: string
+  ): Promise<WebhookSubscription | undefined> {
+    const [row] = await db
+      .select()
+      .from(webhookSubscriptions)
+      .where(and(eq(webhookSubscriptions.id, id), eq(webhookSubscriptions.userId, userId)));
+    return row ?? undefined;
+  }
+
+  async getEnabledWebhookSubscriptions(): Promise<WebhookSubscription[]> {
+    return db.select().from(webhookSubscriptions).where(eq(webhookSubscriptions.enabled, true));
+  }
+
+  async addWebhookSubscription(input: NewWebhookSubscriptionInput): Promise<WebhookSubscription> {
+    const rows = await db
+      .insert(webhookSubscriptions)
+      .values({ id: randomUUID(), ...input, enabled: input.enabled ?? true })
+      .returning();
+    return firstOrThrow(rows);
+  }
+
+  async updateWebhookSubscription(
+    id: string,
+    userId: string,
+    patch: UpdateWebhookSubscriptionInput
+  ): Promise<WebhookSubscription | undefined> {
+    const rows = await db
+      .update(webhookSubscriptions)
+      .set({ ...stripUndefined(patch), updatedAt: new Date() })
+      .where(and(eq(webhookSubscriptions.id, id), eq(webhookSubscriptions.userId, userId)))
+      .returning();
+    return rows[0] ?? undefined;
+  }
+
+  async removeWebhookSubscription(id: string, userId: string): Promise<boolean> {
+    const result = await db
+      .delete(webhookSubscriptions)
+      .where(and(eq(webhookSubscriptions.id, id), eq(webhookSubscriptions.userId, userId)));
+    return affectedRows(result) > 0;
+  }
+
+  async addWebhookDelivery(input: NewWebhookDeliveryInput): Promise<WebhookDelivery> {
+    const rows = await db
+      .insert(webhookDeliveries)
+      // createdAt set here: the column default only has second resolution, which ties
+      // attempts of one event and breaks "newest first".
+      .values({ id: randomUUID(), ...input, createdAt: new Date() })
+      .returning();
+    return firstOrThrow(rows);
+  }
+
+  async getWebhookDeliveries(subscriptionId: string, limit: number): Promise<WebhookDelivery[]> {
+    return db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.subscriptionId, subscriptionId))
+      .orderBy(desc(webhookDeliveries.createdAt))
+      .limit(limit);
+  }
+
+  async pruneWebhookDeliveries(keepPerSubscription: number): Promise<number> {
+    const subs = await db.select({ id: webhookSubscriptions.id }).from(webhookSubscriptions);
+    let removed = 0;
+    for (const { id } of subs) {
+      const stale = await db
+        .select({ id: webhookDeliveries.id })
+        .from(webhookDeliveries)
+        .where(eq(webhookDeliveries.subscriptionId, id))
+        .orderBy(desc(webhookDeliveries.createdAt), desc(webhookDeliveries.id))
+        .offset(keepPerSubscription)
+        .limit(1_000_000);
+      if (stale.length === 0) continue;
+      const result = await db.delete(webhookDeliveries).where(
+        inArray(
+          webhookDeliveries.id,
+          stale.map((r) => r.id)
+        )
+      );
+      removed += affectedRows(result);
+    }
+    return removed;
   }
 
   async getIntegrationRequest(

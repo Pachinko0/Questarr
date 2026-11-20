@@ -92,6 +92,8 @@ import GamePlaytime from "./GamePlaytime";
 import GameScreenshotGallery, { useGameScreenshots } from "./GameScreenshotGallery";
 import FileCategorySelect from "./FileCategorySelect";
 import InstalledVersionField from "./InstalledVersionField";
+import UpgradePolicyField from "./UpgradePolicyField";
+import GameTagsField from "./GameTagsField";
 import { coverSrc } from "@/lib/cover";
 import { getSocket } from "@/lib/socket";
 import { useToast } from "@/hooks/use-toast";
@@ -102,6 +104,7 @@ import type { DownloadCategory } from "@shared/download-categorizer";
 import { resolveTargetPlatform } from "@shared/title-utils";
 import { type XrelGameStatus } from "@shared/xrel-types";
 import StatusBadge from "./StatusBadge";
+import { SyncedStatusNote } from "./SyncedStatusNote";
 import GameVideoCarousel from "./GameVideoCarousel";
 import { apiRequest } from "@/lib/queryClient";
 import { cn, safeUrl, formatBytes, isDiscoveryId } from "@/lib/utils";
@@ -787,6 +790,12 @@ export default function GameDetails({ game, onClose }: GameDetailsProps) {
     };
   }, [open, game.id, queryClient]);
 
+  const { data: accountSettings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
+    enabled: open && !isDiscoveryId(game.id),
+  });
+  const accountUpgradePolicy = resolveUpgradePolicy(undefined, accountSettings?.upgradePolicy);
+
   const { data: targetPlatformOptions = [] } = useQuery<IgdbPlatformOption[]>({
     queryKey: ["/api/igdb/platforms"],
     queryFn: async () => {
@@ -1417,6 +1426,11 @@ export default function GameDetails({ game, onClose }: GameDetailsProps) {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={game.status} />
+                  <SyncedStatusNote
+                    gameId={game.id}
+                    status={game.status}
+                    syncSource={game.statusSyncSource}
+                  />
                   {game.earlyAccess && (
                     <Badge className="gap-1 border-amber-600 bg-amber-500 text-xs text-white">
                       <FlaskConical className="h-3 w-3" />
@@ -1771,9 +1785,19 @@ export default function GameDetails({ game, onClose }: GameDetailsProps) {
                     key={game.id}
                     gameId={game.id}
                     installedVersion={game.installedVersion ?? null}
+                    installedVersionSource={game.installedVersionSource ?? null}
                     releaseNames={downloadReleaseNames}
                   />
                 )}
+                {isLibraryGame && (
+                  <UpgradePolicyField
+                    key={`upgrade-${game.id}`}
+                    gameId={game.id}
+                    upgradePolicy={(game.upgradePolicy as UpgradePolicy | null) ?? null}
+                    defaultPolicy={accountUpgradePolicy}
+                  />
+                )}
+                {isLibraryGame && <GameTagsField key={`tags-${game.id}`} gameId={game.id} />}
               </SideBlock>
 
               {(hasScores || hasTimeToBeat) && (
@@ -1964,6 +1988,8 @@ export default function GameDetails({ game, onClose }: GameDetailsProps) {
                   gameId={game.id}
                   gameTitle={game.title}
                   timeToBeatHours={game.timeToBeatNormally ?? null}
+                  gameStatus={game.status}
+                  finishBy={game.finishBy ?? null}
                 />
               </Section>
             )}

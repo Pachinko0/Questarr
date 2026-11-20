@@ -10,12 +10,17 @@ import parseTorrent from "parse-torrent";
 import { isSafeUrl, safeFetch } from "../ssrf.js";
 import type { DownloadRequest, DownloaderClient } from "./types.js";
 import {
-  fetchWithMagnetDetection,
   assertCredentialsAllowed,
   buildBasicAuthHeader,
+  buildDownloaderBaseUrl,
+  fetchWithMagnetDetection,
+  findTorrentByTagNull,
+  getErrorMessage,
   isHttpsUrl,
   logDownloaderDebugResponse,
-  findTorrentByTagNull,
+  maxTrackerSwarmCounts,
+  normalizePeerCount,
+  runDownloaderAction,
 } from "./utils.js";
 
 interface TransmissionTorrent {
@@ -72,6 +77,36 @@ interface TransmissionTorrent {
   [key: string]: unknown;
 }
 
+/** Torrent reference returned by `torrent-add` (added or duplicate). */
+interface TransmissionAddedTorrent {
+  id?: number;
+  hashString?: string;
+  name?: string;
+}
+
+/** Arguments accepted by `torrent-add` that this client sets. */
+interface TransmissionAddArguments {
+  filename?: string;
+  metainfo?: string;
+  "download-dir"?: string;
+  labels?: string[];
+  "priority-high"?: boolean;
+  "priority-low"?: boolean;
+}
+
+/** Envelope of a Transmission RPC response, limited to the fields this client reads. */
+interface TransmissionRpcResponse {
+  result?: string;
+  arguments: {
+    "torrent-added"?: TransmissionAddedTorrent;
+    "torrent-duplicate"?: TransmissionAddedTorrent;
+    torrents?: TransmissionTorrent[];
+    "download-dir"?: string;
+    "size-bytes"?: number;
+    [key: string]: unknown;
+  };
+}
+
 export class TransmissionClient implements DownloaderClient {
   private downloader: Downloader;
   private sessionId: string | null = null;
@@ -81,30 +116,7 @@ export class TransmissionClient implements DownloaderClient {
   }
 
   private getBaseUrl(): string {
-    let baseUrl = this.downloader.url;
-    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-      const protocol = this.downloader.useSsl ? "https://" : "http://";
-      baseUrl = protocol + baseUrl;
-    }
-
-    try {
-      const urlObj = new URL(baseUrl);
-      if (this.downloader.port) {
-        urlObj.port = this.downloader.port.toString();
-      }
-
-      // Add urlPath logic here
-      if (this.downloader.urlPath) {
-        let path = this.downloader.urlPath;
-        if (!path.startsWith("/")) path = `/${path}`;
-        if (path.endsWith("/")) path = path.slice(0, -1);
-        urlObj.pathname = `${urlObj.pathname.replace(/\/$/, "")}${path}`;
-      }
-
-      return urlObj.toString().replace(/\/$/, "");
-    } catch {
-      return baseUrl.replace(/\/$/, "");
-    }
+    return buildDownloaderBaseUrl(this.downloader, { applyUrlPath: true });
   }
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
@@ -123,7 +135,7 @@ export class TransmissionClient implements DownloaderClient {
             : "Connected successfully to Transmission",
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       downloadersLogger.error(
         {
           error: errorMessage,
@@ -170,8 +182,7 @@ export class TransmissionClient implements DownloaderClient {
     request: DownloadRequest
   ): Promise<{ success: boolean; id?: string; message: string }> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const args: any = {};
+      const args: TransmissionAddArguments = {};
 
       // Check if it's a magnet link or a URL that needs downloading
       const isMagnet = request.url.startsWith("magnet:");
@@ -282,9 +293,7 @@ export class TransmissionClient implements DownloaderClient {
               ids: [torrent.id],
               fields: ["hashString"],
             });
-            if (details.arguments.torrents && details.arguments.torrents.length > 0) {
-              id = details.arguments.torrents[0].hashString;
-            }
+            id = details.arguments.torrents?.[0]?.hashString;
           } catch (error) {
             downloadersLogger.warn(
               { error, torrentId: torrent.id },
@@ -293,18 +302,20 @@ export class TransmissionClient implements DownloaderClient {
           }
         }
 
+        const resolvedId = id || torrent.id?.toString();
         return {
           success: true,
-          id: id || torrent.id?.toString(),
+          ...(resolvedId ? { id: resolvedId } : {}),
           message: "Download added successfully",
         };
       } else if (response.arguments["torrent-duplicate"]) {
         const torrent = response.arguments["torrent-duplicate"];
         // Return success: true for duplicates to prevent fallback mechanism from trying other downloaders
         // as the user likely intends for this specific downloader to handle it (or it's already there)
+        const duplicateId = torrent.hashString || torrent.id?.toString();
         return {
           success: true,
-          id: torrent.hashString || torrent.id?.toString(),
+          ...(duplicateId ? { id: duplicateId } : {}),
           message: "Download already exists (Transmission)",
         };
       } else {
@@ -320,7 +331,7 @@ export class TransmissionClient implements DownloaderClient {
         };
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = getErrorMessage(error);
       return { success: false, message: `Failed to add download: ${errorMessage}` };
     }
   }
@@ -350,8 +361,8 @@ export class TransmissionClient implements DownloaderClient {
         ],
       });
 
-      if (response.arguments.torrents && response.arguments.torrents.length > 0) {
-        const torrent = response.arguments.torrents[0];
+      const torrent = response.arguments.torrents?.[0];
+      if (torrent) {
         return this.mapTransmissionStatus(torrent);
       }
 
@@ -395,8 +406,8 @@ export class TransmissionClient implements DownloaderClient {
         ],
       });
 
-      if (response.arguments.torrents && response.arguments.torrents.length > 0) {
-        const torrent = response.arguments.torrents[0];
+      const torrent = response.arguments.torrents?.[0];
+      if (torrent) {
         return this.mapTransmissionDetails(torrent);
       }
 
@@ -439,39 +450,27 @@ export class TransmissionClient implements DownloaderClient {
   }
 
   async pauseDownload(id: string): Promise<{ success: boolean; message: string }> {
-    try {
+    return runDownloaderAction("pause", async () => {
       await this.makeRequest("torrent-stop", { ids: this.toTransmissionIds(id) });
-      return { success: true, message: "Download paused successfully" };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      return { success: false, message: `Failed to pause download: ${errorMessage}` };
-    }
+    });
   }
 
   async resumeDownload(id: string): Promise<{ success: boolean; message: string }> {
-    try {
+    return runDownloaderAction("resume", async () => {
       await this.makeRequest("torrent-start", { ids: this.toTransmissionIds(id) });
-      return { success: true, message: "Download resumed successfully" };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      return { success: false, message: `Failed to resume download: ${errorMessage}` };
-    }
+    });
   }
 
   async removeDownload(
     id: string,
     deleteFiles = false
   ): Promise<{ success: boolean; message: string }> {
-    try {
+    return runDownloaderAction("remove", async () => {
       await this.makeRequest("torrent-remove", {
         ids: this.toTransmissionIds(id),
         "delete-local-data": deleteFiles,
       });
-      return { success: true, message: "Download removed successfully" };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      return { success: false, message: `Failed to remove download: ${errorMessage}` };
-    }
+    });
   }
 
   async getFreeSpace(): Promise<number> {
@@ -536,8 +535,8 @@ export class TransmissionClient implements DownloaderClient {
     }
 
     const trackerSwarmCounts = this.getTrackerSwarmCounts(torrent.trackerStats);
-    const connectedSeeders = this.normalizePeerCount(torrent.peersSendingToUs);
-    const connectedLeechers = this.normalizePeerCount(torrent.peersGettingFromUs);
+    const connectedSeeders = normalizePeerCount(torrent.peersSendingToUs);
+    const connectedLeechers = normalizePeerCount(torrent.peersGettingFromUs);
 
     return {
       id: torrent.hashString || torrent.id.toString(), // Use hash for consistency, fallback to numeric id
@@ -654,10 +653,6 @@ export class TransmissionClient implements DownloaderClient {
     };
   }
 
-  private normalizePeerCount(count: number | undefined): number | undefined {
-    return typeof count === "number" && Number.isFinite(count) && count >= 0 ? count : undefined;
-  }
-
   private toTransmissionIds(id: string): Array<string | number> {
     return /^\d+$/.test(id) ? [Number.parseInt(id, 10)] : [id];
   }
@@ -666,22 +661,12 @@ export class TransmissionClient implements DownloaderClient {
     seeders?: number | undefined;
     leechers?: number | undefined;
   } {
-    let seeders: number | undefined;
-    let leechers: number | undefined;
-
-    for (const tracker of trackerStats ?? []) {
-      const trackerSeeders = this.normalizePeerCount(tracker.seederCount);
-      const trackerLeechers = this.normalizePeerCount(tracker.leecherCount);
-
-      if (trackerSeeders !== undefined) {
-        seeders = seeders === undefined ? trackerSeeders : Math.max(seeders, trackerSeeders);
-      }
-      if (trackerLeechers !== undefined) {
-        leechers = leechers === undefined ? trackerLeechers : Math.max(leechers, trackerLeechers);
-      }
-    }
-
-    return { seeders, leechers };
+    return maxTrackerSwarmCounts(
+      (trackerStats ?? []).map((tracker) => ({
+        seeders: tracker.seederCount,
+        leechers: tracker.leecherCount,
+      }))
+    );
   }
 
   /**
@@ -690,9 +675,10 @@ export class TransmissionClient implements DownloaderClient {
    * @throws If the transport policy forbids the configured credentials, or the
    * underlying RPC call fails.
    */
-  // Transmission API response structure
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async makeRequest(method: string, arguments_: any): Promise<any> {
+  private async makeRequest(
+    method: string,
+    arguments_: Record<string, unknown> | TransmissionAddArguments
+  ): Promise<TransmissionRpcResponse> {
     const baseUrl = this.getBaseUrl();
 
     // If the base URL doesn't already contain /transmission/rpc, append it

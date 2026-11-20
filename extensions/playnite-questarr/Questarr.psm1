@@ -28,6 +28,24 @@ $script:ConfigFileName = "config.json"
 # server's own limit so large libraries stay within one request each time.
 $script:SyncBatchSize = 500
 
+# Play sessions that could not reach the server wait in a small file and are
+# retried later. The cap keeps a long outage from growing it without bound.
+$script:PlayQueueFileName = "play-sessions-queue.json"
+$script:PlayQueueMax = 200
+# Shorter than a sync: this runs when a game closes and must not stall Playnite.
+$script:PlaySessionTimeoutSec = 10
+# A flush on game stop or startup gives up after this long; the rest stays queued.
+$script:PlayFlushBudgetSec = 30
+# Quickly closed launches are noise, and the server caps a session at 24 hours.
+$script:PlayMinSeconds = 60
+$script:PlayMaxSeconds = 24 * 60 * 60
+# Playnite library plugin ids, used to tell Questarr which store a game comes from.
+$script:PluginIdSteam = [Guid]"cb91dfc9-b977-43bf-8e70-55f46e410fab"
+$script:PluginIdGog = [Guid]"aebe8b7c-6dc3-4a66-af31-e7375c6b5e9e"
+$script:PluginIdEpic = [Guid]"00000002-dbd1-46c6-b5d0-b1ba559d10e4"
+# Playnite game id -> UTC start time, filled by OnGameStarted.
+$script:PlayStarts = @{}
+
 function Get-QuestarrConfigPath {
     return (Join-Path $CurrentExtensionDataPath $script:ConfigFileName)
 }
@@ -43,7 +61,9 @@ function Save-QuestarrConfig {
         [Parameter(Mandatory)] [string] $ServerUrl,
         [Parameter(Mandatory)] [string] $ApiKey,
         [bool] $SyncOnLibraryUpdate = $false,
-        [bool] $MarkInstalledAsOwned = $false
+        [bool] $MarkInstalledAsOwned = $false,
+        [bool] $TrackPlayTime = $false,
+        [bool] $SyncPlayStatus = $false
     )
 
     if (-not (Test-Path $CurrentExtensionDataPath)) {
@@ -58,6 +78,8 @@ function Save-QuestarrConfig {
         ApiKeyEncrypted      = $secured
         SyncOnLibraryUpdate  = $SyncOnLibraryUpdate
         MarkInstalledAsOwned = $MarkInstalledAsOwned
+        TrackPlayTime        = $TrackPlayTime
+        SyncPlayStatus       = $SyncPlayStatus
     }
 
     $config | ConvertTo-Json -Depth 4 | Set-Content -Path (Get-QuestarrConfigPath) -Encoding UTF8
@@ -103,6 +125,8 @@ function Get-QuestarrConfig {
         ApiKey               = $apiKey
         SyncOnLibraryUpdate  = [bool]$raw.SyncOnLibraryUpdate
         MarkInstalledAsOwned = [bool]$raw.MarkInstalledAsOwned
+        TrackPlayTime        = [bool]$raw.TrackPlayTime
+        SyncPlayStatus       = [bool]$raw.SyncPlayStatus
     }
 }
 
@@ -163,6 +187,8 @@ function Invoke-QuestarrHttpRequest {
     $request.Accept = "application/json"
     $request.Headers.Add("X-Api-Key", $ApiKey)
     $request.Timeout = $TimeoutSec * 1000
+    # Timeout only covers getting the response headers; bound reading the body too.
+    if ($request -is [System.Net.HttpWebRequest]) { $request.ReadWriteTimeout = $TimeoutSec * 1000 }
     $request.AllowAutoRedirect = $false
 
     if ($null -ne $Body) {
@@ -294,6 +320,48 @@ function GetMainMenuItems {
     $owned.FunctionName = "Invoke-QuestarrToggleMarkInstalledAsOwned"
     $owned.MenuSection = "@Questarr"
     $items += $owned
+
+    $track = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $track.Description = "Toggle sending play time to Questarr"
+    $track.FunctionName = "Invoke-QuestarrToggleTrackPlayTime"
+    $track.MenuSection = "@Questarr"
+    $items += $track
+
+    $status = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $status.Description = "Sync play status to Questarr"
+    $status.FunctionName = "Invoke-QuestarrSyncPlayStatus"
+    $status.MenuSection = "@Questarr"
+    $items += $status
+
+    $toggleStatus = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $toggleStatus.Description = "Toggle sending play status after each library update"
+    $toggleStatus.FunctionName = "Invoke-QuestarrToggleSyncPlayStatus"
+    $toggleStatus.MenuSection = "@Questarr"
+    $items += $toggleStatus
+
+    $importGog = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $importGog.Description = "Import GOG library into Questarr"
+    $importGog.FunctionName = "Invoke-QuestarrImportGogLibrary"
+    $importGog.MenuSection = "@Questarr"
+    $items += $importGog
+
+    $gogTime = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $gogTime.Description = "Import GOG play time into Questarr"
+    $gogTime.FunctionName = "Invoke-QuestarrImportGogPlayTime"
+    $gogTime.MenuSection = "@Questarr"
+    $items += $gogTime
+
+    $importEpic = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $importEpic.Description = "Import Epic library into Questarr"
+    $importEpic.FunctionName = "Invoke-QuestarrImportEpicLibrary"
+    $importEpic.MenuSection = "@Questarr"
+    $items += $importEpic
+
+    $epicTime = New-Object Playnite.SDK.Plugins.ScriptMainMenuItem
+    $epicTime.Description = "Import Epic play time into Questarr"
+    $epicTime.FunctionName = "Invoke-QuestarrImportEpicPlayTime"
+    $epicTime.MenuSection = "@Questarr"
+    $items += $epicTime
 
     return $items
 }
@@ -448,7 +516,9 @@ function Invoke-QuestarrConnect {
         -ServerUrl $serverUrl `
         -ApiKey $apiKey `
         -SyncOnLibraryUpdate $(if ($existing) { $existing.SyncOnLibraryUpdate } else { $false }) `
-        -MarkInstalledAsOwned $(if ($existing) { $existing.MarkInstalledAsOwned } else { $false })
+        -MarkInstalledAsOwned $(if ($existing) { $existing.MarkInstalledAsOwned } else { $false }) `
+        -TrackPlayTime $(if ($existing) { $existing.TrackPlayTime } else { $false }) `
+        -SyncPlayStatus $(if ($existing) { $existing.SyncPlayStatus } else { $false })
 
     $PlayniteApi.Dialogs.ShowMessage(
         "Connected to Questarr $($ping.version) as $($ping.authenticatedAs.username).",
@@ -466,7 +536,9 @@ function Invoke-QuestarrToggleAutoSync {
         -ServerUrl $config.ServerUrl `
         -ApiKey $config.ApiKey `
         -SyncOnLibraryUpdate $enabled `
-        -MarkInstalledAsOwned $config.MarkInstalledAsOwned
+        -MarkInstalledAsOwned $config.MarkInstalledAsOwned `
+        -TrackPlayTime $config.TrackPlayTime `
+        -SyncPlayStatus $config.SyncPlayStatus
 
     $state = if ($enabled) { "enabled" } else { "disabled" }
     $PlayniteApi.Dialogs.ShowMessage("Automatic sync on library update is now $state.", "Questarr")
@@ -483,11 +555,70 @@ function Invoke-QuestarrToggleMarkInstalledAsOwned {
         -ServerUrl $config.ServerUrl `
         -ApiKey $config.ApiKey `
         -SyncOnLibraryUpdate $config.SyncOnLibraryUpdate `
-        -MarkInstalledAsOwned $enabled
+        -MarkInstalledAsOwned $enabled `
+        -TrackPlayTime $config.TrackPlayTime `
+        -SyncPlayStatus $config.SyncPlayStatus
 
     $state = if ($enabled) { "enabled" } else { "disabled" }
     $PlayniteApi.Dialogs.ShowMessage(
         "Promoting an installed 'wanted' game to 'owned' during sync is now $state.", "Questarr")
+}
+
+function Invoke-QuestarrToggleTrackPlayTime {
+    param($scriptMainMenuItemActionArgs)
+
+    $config = Get-QuestarrConfigOrWarn
+    if ($null -eq $config) { return }
+
+    $enabled = -not $config.TrackPlayTime
+    Save-QuestarrConfig `
+        -ServerUrl $config.ServerUrl `
+        -ApiKey $config.ApiKey `
+        -SyncOnLibraryUpdate $config.SyncOnLibraryUpdate `
+        -MarkInstalledAsOwned $config.MarkInstalledAsOwned `
+        -TrackPlayTime $enabled `
+        -SyncPlayStatus $config.SyncPlayStatus
+
+    $state = if ($enabled) { "enabled" } else { "disabled" }
+    $PlayniteApi.Dialogs.ShowMessage(
+        "Sending the time you play to Questarr is now $state.", "Questarr")
+}
+
+function Invoke-QuestarrToggleSyncPlayStatus {
+    param($scriptMainMenuItemActionArgs)
+
+    $config = Get-QuestarrConfigOrWarn
+    if ($null -eq $config) { return }
+
+    $enabled = -not $config.SyncPlayStatus
+    Save-QuestarrConfig `
+        -ServerUrl $config.ServerUrl `
+        -ApiKey $config.ApiKey `
+        -SyncOnLibraryUpdate $config.SyncOnLibraryUpdate `
+        -MarkInstalledAsOwned $config.MarkInstalledAsOwned `
+        -TrackPlayTime $config.TrackPlayTime `
+        -SyncPlayStatus $enabled
+
+    $state = if ($enabled) { "enabled" } else { "disabled" }
+    $PlayniteApi.Dialogs.ShowMessage(
+        "Sending the play status after each library update is now $state.", "Questarr")
+}
+
+<#
+    Steam is the one Playnite library whose GameId maps cleanly onto an
+    identifier Questarr also stores, so it gets an exact match instead of a
+    title comparison. Returns 0 for any other game.
+#>
+function Get-QuestarrSteamAppId {
+    param($Game)
+
+    if ($Game.PluginId -eq [Guid]"cb91dfc9-b977-43bf-8e70-55f46e410fab") {
+        $steamAppId = 0
+        if ([int]::TryParse($Game.GameId, [ref]$steamAppId) -and $steamAppId -gt 0) {
+            return $steamAppId
+        }
+    }
+    return 0
 }
 
 <#
@@ -507,14 +638,9 @@ function Get-QuestarrSyncPayload {
             installed  = [bool]$game.IsInstalled
         }
 
-        # Steam is the one Playnite library whose GameId maps cleanly onto an
-        # identifier Questarr also stores, so it gets an exact match instead of
-        # a title comparison.
-        if ($game.PluginId -eq [Guid]"cb91dfc9-b977-43bf-8e70-55f46e410fab") {
-            $steamAppId = 0
-            if ([int]::TryParse($game.GameId, [ref]$steamAppId) -and $steamAppId -gt 0) {
-                $entry.steamAppId = $steamAppId
-            }
+        $steamAppId = Get-QuestarrSteamAppId $game
+        if ($steamAppId -gt 0) {
+            $entry.steamAppId = $steamAppId
         }
 
         [void]$entries.Add($entry)
@@ -686,6 +812,528 @@ function Invoke-QuestarrRequestGame {
     $PlayniteApi.Dialogs.ShowMessage(($lines -join "`n`n"), "Questarr")
 }
 
+# ── Play status ──────────────────────────────────────────────────────────────
+
+# Most requests Questarr accepts per call; stay below its own limit like the library sync.
+$script:PlayStatusBatchSize = 500
+
+<#
+    The store a game comes from, as Questarr names it, or "" for anything else
+    (the server then records the status as coming from Playnite itself).
+#>
+function Get-QuestarrPlatformName {
+    param($Game)
+
+    if ($Game.PluginId -eq $script:PluginIdSteam) { return "steam" }
+    if ($Game.PluginId -eq $script:PluginIdGog) { return "gog" }
+    if ($Game.PluginId -eq $script:PluginIdEpic) { return "epic" }
+    return ""
+}
+
+<#
+    One entry per game that has a completion status in Playnite. Games with no
+    status are left out: there is nothing to tell Questarr about them.
+#>
+function Get-QuestarrPlayStatusPayload {
+    $entries = New-Object System.Collections.ArrayList
+
+    foreach ($game in $PlayniteApi.Database.Games) {
+        if ([string]::IsNullOrWhiteSpace($game.Name)) { continue }
+        if ($null -eq $game.CompletionStatus) { continue }
+        $statusName = [string]$game.CompletionStatus.Name
+        if ([string]::IsNullOrWhiteSpace($statusName)) { continue }
+        # Questarr rejects a whole batch if one entry is over these limits, so leave such games out.
+        if ($statusName.Length -gt 100 -or $game.Name.Length -gt 500) {
+            $__logger.Warn("Questarr: '$($game.Name)' skipped from the play status sync (title or status name too long)")
+            continue
+        }
+
+        $entry = @{
+            title      = $game.Name
+            externalId = $game.Id.ToString()
+            status     = $statusName
+        }
+
+        $platform = Get-QuestarrPlatformName $game
+        if ($platform) {
+            $entry.platform = $platform
+        }
+
+        $steamAppId = Get-QuestarrSteamAppId $game
+        if ($steamAppId -gt 0) {
+            $entry.steamAppId = $steamAppId
+        }
+
+        [void]$entries.Add($entry)
+    }
+
+    # Comma operator, as in Get-QuestarrSyncPayload: keep the ArrayList intact.
+    return , $entries
+}
+
+<#
+    Sends the statuses in batches and sums the per-entry outcomes. Throws on the
+    first failing batch so the caller reports one clear reason.
+#>
+function Invoke-QuestarrPlayStatusBatches {
+    param(
+        [Parameter(Mandatory)] $Config,
+        [Parameter(Mandatory)] $Entries,
+        $Progress = $null
+    )
+
+    $updated = 0
+    $unchanged = 0
+    $skipped = 0
+    $unmatched = 0
+
+    for ($offset = 0; $offset -lt $Entries.Count; $offset += $script:PlayStatusBatchSize) {
+        if ($null -ne $Progress -and $Progress.CancelToken.IsCancellationRequested) {
+            # $null (not a partial tally) tells the caller the user cut it short.
+            return $null
+        }
+
+        $take = [Math]::Min($script:PlayStatusBatchSize, $Entries.Count - $offset)
+        $batch = @($Entries.GetRange($offset, $take))
+
+        $response = Invoke-QuestarrApi -Config $Config -Path "/play-status" -Method "Post" -Body @{
+            games          = $batch
+            promoteWanted  = [bool]$Config.MarkInstalledAsOwned
+        }
+
+        $updated += [int]$response.updated
+        $unchanged += [int]$response.unchanged
+        $skipped += [int]$response.skipped
+        $unmatched += [int]$response.unmatched
+
+        if ($null -ne $Progress) {
+            $Progress.CurrentProgressValue = $offset + $take
+        }
+    }
+
+    return [PSCustomObject]@{
+        Updated   = $updated
+        Unchanged = $unchanged
+        Skipped   = $skipped
+        Unmatched = $unmatched
+    }
+}
+
+<#
+    Runs the status upload behind Playnite's progress dialog, like the library
+    sync, so a slow server never freezes the Playnite window. Results travel back
+    through script-scoped variables because the dialog runs on another thread.
+    Returns $null when it failed (already reported) or was cancelled.
+#>
+function Invoke-QuestarrPlayStatusWithProgress {
+    param(
+        [Parameter(Mandatory)] $Config,
+        [Parameter(Mandatory)] $Entries
+    )
+
+    $script:StatusConfig = $Config
+    $script:StatusEntries = $Entries
+    $script:StatusResult = $null
+    $script:StatusError = $null
+
+    $options = New-Object Playnite.SDK.GlobalProgressOptions("Sending play status to Questarr...", $true)
+    $options.IsIndeterminate = $false
+
+    $PlayniteApi.Dialogs.ActivateGlobalProgress({
+            param($progress)
+            $progress.ProgressMaxValue = $script:StatusEntries.Count
+            try {
+                $script:StatusResult = Invoke-QuestarrPlayStatusBatches `
+                    -Config $script:StatusConfig -Entries $script:StatusEntries -Progress $progress
+            }
+            catch {
+                $script:StatusError = Get-QuestarrErrorMessage $_
+            }
+        }, $options) | Out-Null
+
+    if ($null -ne $script:StatusError) {
+        $__logger.Error("Questarr: play status sync failed: $($script:StatusError)")
+        $PlayniteApi.Dialogs.ShowErrorMessage($script:StatusError, "Questarr")
+        return $null
+    }
+
+    return $script:StatusResult
+}
+
+function Invoke-QuestarrSyncPlayStatus {
+    param($scriptMainMenuItemActionArgs)
+
+    $config = Get-QuestarrConfigOrWarn
+    if ($null -eq $config) { return }
+
+    $entries = Get-QuestarrPlayStatusPayload
+    if ($entries.Count -eq 0) {
+        $PlayniteApi.Dialogs.ShowMessage(
+            "No game in this Playnite library has a completion status to send.", "Questarr")
+        return
+    }
+
+    $result = Invoke-QuestarrPlayStatusWithProgress -Config $config -Entries $entries
+    if ($null -eq $result) { return }
+
+    $PlayniteApi.Dialogs.ShowMessage(
+        (("Sent the status of {0} games to Questarr.`n`nUpdated: {1}`nAlready the same: {2}`n" +
+            "Left alone (set by hand in Questarr, wanted or downloading): {3}`nNot in Questarr: {4}") -f `
+            $entries.Count, $result.Updated, $result.Unchanged, $result.Skipped, $result.Unmatched),
+        "Questarr")
+}
+
+# ── GOG and Epic library and play time ───────────────────────────────────────
+# One-off imports, run by hand: each library is read by Playnite's own store plugin, so
+# nothing here talks to GOG or Epic.
+
+# Stores with an import command: Questarr's name for the store, how it is shown, and the
+# Playnite library plugin that reads it.
+$script:ImportStores = @{
+    gog  = @{ Label = "GOG"; PluginId = $script:PluginIdGog }
+    epic = @{ Label = "Epic"; PluginId = $script:PluginIdEpic }
+}
+
+# The server looks each new title up on IGDB, so it takes few games per request.
+$script:ImportBatchSize = 25
+
+function Get-QuestarrStoreGames {
+    param([Parameter(Mandatory)] [string] $Store)
+
+    $pluginId = $script:ImportStores[$Store].PluginId
+    @($PlayniteApi.Database.Games | Where-Object {
+            $_.PluginId -eq $pluginId -and -not [string]::IsNullOrWhiteSpace($_.Name) -and $_.Name.Length -le 500
+        })
+}
+
+<#
+    Sends the work in batches behind Playnite's progress dialog. $Kind is "library" (create the
+    missing games) or "time" (send the play time totals). Returns the summed counters, or $null
+    when it failed (already reported) or was cancelled.
+#>
+function Invoke-QuestarrStoreBatchesWithProgress {
+    param(
+        [Parameter(Mandatory)] $Config,
+        [Parameter(Mandatory)] $Entries,
+        [Parameter(Mandatory)] [ValidateSet("library", "time")] [string] $Kind,
+        [Parameter(Mandatory)] [string] $Store,
+        [switch] $FlushQueueFirst
+    )
+
+    $script:StoreConfig = $Config
+    $script:StoreFlushFirst = [bool]$FlushQueueFirst
+    $script:StoreQueuePending = $false
+    $script:StoreEntries = $Entries
+    $script:StoreKind = $Kind
+    $script:StoreLabel = $script:ImportStores[$Store].Label
+    $script:StoreResult = $null
+    $script:StoreError = $null
+
+    $title = if ($Kind -eq "library") { "Importing the $($script:StoreLabel) library into Questarr..." } else { "Sending $($script:StoreLabel) play time to Questarr..." }
+    $options = New-Object Playnite.SDK.GlobalProgressOptions($title, $true)
+    $options.IsIndeterminate = $false
+
+    $PlayniteApi.Dialogs.ActivateGlobalProgress({
+            param($progress)
+            $progress.ProgressMaxValue = $script:StoreEntries.Count
+            try {
+                if ($script:StoreFlushFirst) {
+                    # The flush is a network call: run here, off Playnite's main thread.
+                    Invoke-QuestarrFlushPlayQueue -Config $script:StoreConfig
+                    if (@(Read-QuestarrPlayQueue).Count -gt 0) {
+                        $script:StoreQueuePending = $true
+                        return
+                    }
+                }
+                $isLibrary = $script:StoreKind -eq "library"
+                $size = if ($isLibrary) { $script:ImportBatchSize } else { $script:PlayStatusBatchSize }
+                $path = if ($isLibrary) { "/library/import" } else { "/play-time-totals" }
+                $totals = @{ Added = 0; Existing = 0; NotFound = 0; Imported = 0; Unchanged = 0; Skipped = 0; Unmatched = 0; Minutes = 0 }
+                for ($offset = 0; $offset -lt $script:StoreEntries.Count; $offset += $size) {
+                    if ($progress.CancelToken.IsCancellationRequested) { return }
+                    $take = [Math]::Min($size, $script:StoreEntries.Count - $offset)
+                    $batch = @($script:StoreEntries.GetRange($offset, $take))
+                    $response = Invoke-QuestarrApi -Config $script:StoreConfig -Path $path -Method "Post" `
+                        -Body @{ games = $batch } -TimeoutSec 300
+                    $totals.Added += [int]$response.added
+                    $totals.Existing += [int]$response.existing
+                    $totals.NotFound += [int]$response.notFound
+                    $totals.Imported += [int]$response.imported
+                    $totals.Unchanged += [int]$response.unchanged
+                    $totals.Skipped += [int]$response.skipped
+                    $totals.Unmatched += [int]$response.unmatched
+                    $totals.Minutes += [int]$response.minutesAdded
+                    $progress.CurrentProgressValue = $offset + $take
+                }
+                $script:StoreResult = [PSCustomObject]$totals
+            }
+            catch {
+                $script:StoreError = Get-QuestarrErrorMessage $_
+            }
+        }, $options) | Out-Null
+
+    if ($script:StoreQueuePending) {
+        $PlayniteApi.Dialogs.ShowMessage(
+            "Some play sessions could not be sent to Questarr yet. Play time is not imported while they wait: " +
+            "check that Questarr is reachable and try again.", "Questarr")
+        return $null
+    }
+
+    if ($null -ne $script:StoreError) {
+        $__logger.Error("Questarr: $($script:StoreLabel) import failed: $($script:StoreError)")
+        $PlayniteApi.Dialogs.ShowErrorMessage($script:StoreError, "Questarr")
+        return $null
+    }
+
+    return $script:StoreResult
+}
+
+function Invoke-QuestarrImportStoreLibrary {
+    param([Parameter(Mandatory)] [string] $Store)
+
+    $config = Get-QuestarrConfigOrWarn
+    if ($null -eq $config) { return }
+
+    $label = $script:ImportStores[$Store].Label
+    $games = Get-QuestarrStoreGames -Store $Store
+    if ($games.Count -eq 0) {
+        $PlayniteApi.Dialogs.ShowMessage("No $label game in this Playnite library.", "Questarr")
+        return
+    }
+
+    $answer = $PlayniteApi.Dialogs.ShowMessage(
+        "Add the $($games.Count) $label games of this library to Questarr as owned games?`n`n" +
+        "Games already in Questarr are left alone. Each new title is looked up on IGDB, so a large " +
+        "library takes a few minutes; a title IGDB cannot match to the same game is skipped.",
+        "Questarr", [System.Windows.MessageBoxButton]::YesNo)
+    if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+    $entries = New-Object System.Collections.ArrayList
+    foreach ($game in $games) {
+        [void]$entries.Add(@{ title = $game.Name; externalId = $game.Id.ToString(); platform = $Store })
+    }
+
+    $result = Invoke-QuestarrStoreBatchesWithProgress -Config $config -Entries $entries -Kind "library" -Store $Store
+    if ($null -eq $result) { return }
+
+    $PlayniteApi.Dialogs.ShowMessage(
+        (("Looked at {0} $label games.`n`nAdded to Questarr: {1}`nAlready in Questarr: {2}`n" +
+            "No matching game on IGDB (skipped): {3}") -f `
+            $entries.Count, $result.Added, $result.Existing, $result.NotFound),
+        "Questarr")
+}
+
+function Invoke-QuestarrImportGogLibrary {
+    param($scriptMainMenuItemActionArgs)
+    Invoke-QuestarrImportStoreLibrary -Store "gog"
+}
+
+function Invoke-QuestarrImportEpicLibrary {
+    param($scriptMainMenuItemActionArgs)
+    Invoke-QuestarrImportStoreLibrary -Store "epic"
+}
+
+function Invoke-QuestarrImportStorePlayTime {
+    param([Parameter(Mandatory)] [string] $Store)
+
+    $config = Get-QuestarrConfigOrWarn
+    if ($null -eq $config) { return }
+
+    $label = $script:ImportStores[$Store].Label
+
+    # Playnite's total already holds the time of any session still waiting in the queue. Sent
+    # first, the queued session would be counted a second time once it is flushed, so the
+    # progress worker flushes the queue before sending totals and stops if sessions remain.
+    $entries = New-Object System.Collections.ArrayList
+    foreach ($game in (Get-QuestarrStoreGames -Store $Store)) {
+        # Playtime is in seconds. Less than ten minutes is below what the server imports.
+        if ([uint64]$game.Playtime -lt 600) { continue }
+        $entry = @{
+            title           = $game.Name
+            externalId      = $game.Id.ToString()
+            playtimeSeconds = [int64][Math]::Min([uint64]$game.Playtime, 100000000)
+        }
+        if ($null -ne $game.LastActivity) {
+            $entry.lastPlayedAt = Format-QuestarrUtc $game.LastActivity
+        }
+        [void]$entries.Add($entry)
+    }
+    if ($entries.Count -eq 0) {
+        $PlayniteApi.Dialogs.ShowMessage("No $label game with recorded play time in this library.", "Questarr")
+        return
+    }
+
+    $result = Invoke-QuestarrStoreBatchesWithProgress -Config $config -Entries $entries -Kind "time" -Store $Store -FlushQueueFirst
+    if ($null -eq $result) { return }
+
+    $hours = [Math]::Round($result.Minutes / 60, 1)
+    $PlayniteApi.Dialogs.ShowMessage(
+        (("Sent the play time of {0} $label games.`n`nImported: {1} ({2} h)`nAlready in Questarr: {3}`n" +
+            "Left alone (timer running): {4}`nNot in Questarr: {5}") -f `
+            $entries.Count, $result.Imported, $hours, $result.Unchanged, $result.Skipped, $result.Unmatched),
+        "Questarr")
+}
+
+function Invoke-QuestarrImportGogPlayTime {
+    param($scriptMainMenuItemActionArgs)
+    Invoke-QuestarrImportStorePlayTime -Store "gog"
+}
+
+function Invoke-QuestarrImportEpicPlayTime {
+    param($scriptMainMenuItemActionArgs)
+    Invoke-QuestarrImportStorePlayTime -Store "epic"
+}
+
+# ── Play time ────────────────────────────────────────────────────────────────
+
+function Get-QuestarrPlayQueuePath {
+    return (Join-Path $CurrentExtensionDataPath $script:PlayQueueFileName)
+}
+
+function Read-QuestarrPlayQueue {
+    $path = Get-QuestarrPlayQueuePath
+    if (-not (Test-Path $path)) { return @() }
+
+    try {
+        $raw = Get-Content -Path $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        # Keep the damaged file for recovery instead of letting the next write erase it.
+        $__logger.Error("Questarr: unreadable play session queue, moved aside: $($_.Exception.Message)")
+        try {
+            Move-Item -Path $path -Destination "$path.bad" -Force -ErrorAction Stop
+        }
+        catch {
+            # Without a recovery copy, stop here: returning an empty queue would let the
+            # next write replace the only file left.
+            $__logger.Error("Questarr: could not set the unreadable queue aside, it stays in place: $($_.Exception.Message)")
+            throw
+        }
+        return @()
+    }
+
+    # ConvertFrom-Json yields $null for "[]"; wrapping $null in @() would count 1.
+    if ($null -eq $raw) { return @() }
+    return @($raw)
+}
+
+function Write-QuestarrPlayQueue {
+    param($Items)
+
+    if (-not (Test-Path $CurrentExtensionDataPath)) {
+        New-Item -ItemType Directory -Path $CurrentExtensionDataPath -Force | Out-Null
+    }
+
+    $list = @($Items)
+    if ($list.Count -gt $script:PlayQueueMax) {
+        $list = @($list | Select-Object -Last $script:PlayQueueMax)
+    }
+
+    # Write a temporary file first so a crash mid-write cannot truncate the only copy.
+    # -InputObject keeps a single entry a JSON array (the pipeline would unwrap it).
+    $path = Get-QuestarrPlayQueuePath
+    $temp = "$path.tmp"
+    ConvertTo-Json -InputObject $list -Depth 4 | Set-Content -Path $temp -Encoding UTF8
+    if (Test-Path $path) {
+        # Replace keeps the old file until the new one is in place (Move-Item -Force deletes first).
+        [System.IO.File]::Replace($temp, $path, $null)
+    }
+    else {
+        Move-Item -Path $temp -Destination $path
+    }
+}
+
+function Format-QuestarrUtc {
+    param([DateTime] $Value)
+
+    return $Value.ToUniversalTime().ToString(
+        "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+}
+
+<#
+    Sends one finished session. Returns "sent", "skipped" (the server will never
+    accept it: unknown game, invalid data) or "retry" (unreachable, rate limited,
+    server error or a key problem worth fixing and trying again).
+#>
+function Send-QuestarrPlaySession {
+    param(
+        [Parameter(Mandatory)] $Config,
+        [Parameter(Mandatory)] $Entry
+    )
+
+    $body = @{
+        title     = $Entry.title
+        startedAt = $Entry.startedAt
+        endedAt   = $Entry.endedAt
+    }
+    if ($Entry.steamAppId -and [int]$Entry.steamAppId -gt 0) {
+        $body.steamAppId = [int]$Entry.steamAppId
+    }
+
+    try {
+        Invoke-QuestarrApi -Config $Config -Path "/play-sessions" -Method "Post" -Body $body `
+            -TimeoutSec $script:PlaySessionTimeoutSec | Out-Null
+        return "sent"
+    }
+    catch {
+        $response = $_.Exception.Response
+        $status = if ($null -ne $response) { [int]$response.StatusCode } else { 0 }
+
+        if ($status -eq 404) {
+            # A 404 is also what a server without this route answers, which must
+            # keep the session queued; only the server's own "unknown game" code skips it.
+            $text = ""
+            try {
+                $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
+                try { $text = $reader.ReadToEnd() } finally { $reader.Close() }
+            }
+            catch { }
+            if ($text -match '"code"\s*:\s*"GAME_NOT_FOUND"') {
+                $__logger.Info("Questarr: '$($Entry.title)' is not in the Questarr library, play session skipped")
+                return "skipped"
+            }
+            $__logger.Warn("Questarr: play session route not available on this server (needs Questarr 1.7), will retry")
+            return "retry"
+        }
+        if ($status -ge 400 -and $status -lt 500 -and $status -notin 401, 403, 408, 429) {
+            $__logger.Warn("Questarr: play session for '$($Entry.title)' rejected: $(Get-QuestarrErrorMessage $_)")
+            return "skipped"
+        }
+
+        $__logger.Warn("Questarr: play session for '$($Entry.title)' will be retried: $(Get-QuestarrErrorMessage $_)")
+        return "retry"
+    }
+}
+
+<#
+    Sends what is waiting in the queue, oldest first. Stops at the first entry
+    that must be retried (the server is probably unreachable) or once the flush
+    budget is spent, and keeps that entry and everything after it.
+#>
+function Invoke-QuestarrFlushPlayQueue {
+    param([Parameter(Mandatory)] $Config)
+
+    $queue = @(Read-QuestarrPlayQueue)
+    if ($queue.Count -eq 0) { return }
+
+    $remaining = New-Object System.Collections.ArrayList
+    $stopped = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds($script:PlayFlushBudgetSec)
+    foreach ($entry in $queue) {
+        if (-not $stopped -and [DateTime]::UtcNow -ge $deadline) { $stopped = $true }
+        if ($stopped) {
+            [void]$remaining.Add($entry)
+            continue
+        }
+        if ((Send-QuestarrPlaySession -Config $Config -Entry $entry) -eq "retry") {
+            $stopped = $true
+            [void]$remaining.Add($entry)
+        }
+    }
+
+    Write-QuestarrPlayQueue -Items $remaining.ToArray()
+}
+
 # ── Playnite lifecycle hooks ─────────────────────────────────────────────────
 
 <#
@@ -697,20 +1345,113 @@ function OnLibraryUpdated {
     param($eventArgs)
 
     $config = Get-QuestarrConfig
-    if ($null -eq $config -or -not $config.SyncOnLibraryUpdate) { return }
+    if ($null -eq $config) { return }
 
-    $entries = Get-QuestarrSyncPayload
-    if ($entries.Count -eq 0) { return }
+    if ($config.SyncOnLibraryUpdate) {
+        $entries = Get-QuestarrSyncPayload
+        if ($entries.Count -gt 0) {
+            try {
+                $result = Invoke-QuestarrSyncBatches -Config $config -Entries $entries
+                $__logger.Info(
+                    "Questarr: auto-sync matched $($result.Matched), unmatched $($result.Unmatched), promoted $($result.Promoted)")
+            }
+            catch {
+                # A background sync must never interrupt Playnite with a dialog.
+                $__logger.Error("Questarr: auto-sync failed: $(Get-QuestarrErrorMessage $_)")
+            }
+        }
+    }
+
+    if ($config.SyncPlayStatus) {
+        $statuses = Get-QuestarrPlayStatusPayload
+        if ($statuses.Count -gt 0) {
+            try {
+                $result = Invoke-QuestarrPlayStatusBatches -Config $config -Entries $statuses
+                $__logger.Info(
+                    "Questarr: play status updated $($result.Updated), unchanged $($result.Unchanged), skipped $($result.Skipped), unmatched $($result.Unmatched)")
+            }
+            catch {
+                $__logger.Error("Questarr: play status sync failed: $(Get-QuestarrErrorMessage $_)")
+            }
+        }
+    }
+}
+
+<#
+    Playnite raises these around every launch. Only the start time needs
+    remembering: Playnite itself reports how long the game ran when it stops.
+#>
+function OnGameStarted {
+    param($eventArgs)
+
+    $config = Get-QuestarrConfig
+    if ($null -eq $config -or -not $config.TrackPlayTime) { return }
+
+    $script:PlayStarts[$eventArgs.Game.Id.ToString()] = [DateTime]::UtcNow
+}
+
+function OnGameStopped {
+    param($eventArgs)
+
+    $config = Get-QuestarrConfig
+    if ($null -eq $config -or -not $config.TrackPlayTime) { return }
+
+    $game = $eventArgs.Game
+    $key = $game.Id.ToString()
+    $endedAt = [DateTime]::UtcNow
+
+    $startedAt = $null
+    if ($eventArgs.ElapsedSeconds -gt 0) {
+        $startedAt = $endedAt.AddSeconds(-[double]$eventArgs.ElapsedSeconds)
+    }
+    elseif ($script:PlayStarts.ContainsKey($key)) {
+        $startedAt = $script:PlayStarts[$key]
+    }
+    $script:PlayStarts.Remove($key)
+
+    if ($null -ne $startedAt -and -not [string]::IsNullOrWhiteSpace($game.Name)) {
+        $seconds = ($endedAt - $startedAt).TotalSeconds
+        if ($seconds -ge $script:PlayMinSeconds -and $seconds -le $script:PlayMaxSeconds) {
+            $entry = [PSCustomObject]@{
+                title      = $game.Name
+                steamAppId = Get-QuestarrSteamAppId $game
+                startedAt  = Format-QuestarrUtc $startedAt
+                endedAt    = Format-QuestarrUtc $endedAt
+            }
+            # Queue first, then flush: a crash or a dead server never loses the session.
+            try {
+                Write-QuestarrPlayQueue -Items (@(Read-QuestarrPlayQueue) + $entry)
+            }
+            catch {
+                $__logger.Error("Questarr: could not queue the play session: $($_.Exception.Message)")
+                return
+            }
+        }
+    }
 
     try {
-        $result = Invoke-QuestarrSyncBatches -Config $config -Entries $entries
+        Invoke-QuestarrFlushPlayQueue -Config $config
     }
     catch {
-        # A background sync must never interrupt Playnite with a dialog.
-        $__logger.Error("Questarr: auto-sync failed: $(Get-QuestarrErrorMessage $_)")
-        return
+        $__logger.Error("Questarr: play session upload failed: $($_.Exception.Message)")
     }
+}
 
-    $__logger.Info(
-        "Questarr: auto-sync matched $($result.Matched), unmatched $($result.Unmatched), promoted $($result.Promoted)")
+<#
+    Playnite is the one place sessions are recorded while Questarr may be
+    unreachable (a laptop away from home), so retry what is still waiting at
+    startup.
+#>
+function OnApplicationStarted {
+    param($eventArgs)
+
+    $config = Get-QuestarrConfig
+    if ($null -eq $config -or -not $config.TrackPlayTime) { return }
+
+    try {
+        Invoke-QuestarrFlushPlayQueue -Config $config
+    }
+    catch {
+        $__logger.Error("Questarr: play session upload failed: $($_.Exception.Message)")
+    }
 }

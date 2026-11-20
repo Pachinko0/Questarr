@@ -11,15 +11,17 @@ Enable **Post-Processing**, choose a **Library Root**, and save your changes.
 Questarr must be able to read the download source and write to the library root.
 In Docker, mount both locations and use their paths inside the container.
 
-| Setting                           | Behavior                                                                                                                                                |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Transfer Mode                     | Move removes the source as files transfer; Copy leaves it intact. Hardlink preserves the source for seeding and falls back to copying when unsupported. |
-| Auto-Unpack Archives              | Extract ZIP, RAR, and 7z downloads for import. Password-protected archives require manual input.                                                        |
-| Overwrite Existing Files          | Allow replacement of existing destination files. Keep disabled to protect existing files.                                                               |
-| Auto-delete source after import   | After a successful copy or move import, remove the download from the client and delete source files.                                                    |
-| Sort add-on files into subfolders | Organize detected DLC, updates, and extras in `dlc/`, `update/`, and `extra/` for directory imports.                                                    |
-| Naming Pattern                    | Names the game folder, or the file of a single-file release, inside the platform folder. See [Naming pattern](#naming-pattern).                         |
-| Platform Filter                   | Use **Settings → Appearance → Platforms** to limit eligible platforms; an empty list allows all platforms.                                              |
+| Setting                           | Behavior                                                                                                                                                                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Transfer Mode                     | Move removes the source as files transfer; Copy leaves it intact. Hardlink preserves the source for seeding and falls back to copying when unsupported.                                                                                    |
+| Auto-Unpack Archives              | Extract ZIP, RAR, and 7z downloads for import. Password-protected archives require manual input.                                                                                                                                           |
+| Overwrite Existing Files          | Allow replacement of existing destination files. Keep disabled to protect existing files.                                                                                                                                                  |
+| Previous version after an upgrade | What happens to a game's files already in the library when a new full release of it is imported: kept (default), moved to `.questarr-replaced` in the library root, or deleted. The old version is only touched after a successful import. |
+| Folder for single-file releases   | Put a release that is a single file in its own folder named like the game, inside the platform folder, so every game has a folder. On by default; switch it off to keep the file directly in the platform folder.                          |
+| Auto-delete source after import   | After a successful copy or move import, remove the download from the client and delete source files.                                                                                                                                       |
+| Sort add-on files into subfolders | Organize detected DLC, updates, and extras in `dlc/`, `update/`, and `extra/` for directory imports.                                                                                                                                       |
+| Naming Pattern                    | Names the game folder, or the file of a single-file release, inside the platform folder. See [Naming pattern](#naming-pattern).                                                                                                            |
+| Platform Filter                   | Use **Settings → Appearance → Platforms** to limit eligible platforms; an empty list allows all platforms.                                                                                                                                 |
 
 ### Naming pattern
 
@@ -196,6 +198,7 @@ configuration does not delete the directory itself.
 - The scan asks IGDB for ten candidates per folder, since a short name such as "Portal" is
   crowded with sequels and mods. **Needs Review** lists up to ten, likeliest first, each
   with its cover and release year.
+- A folder that stays in Needs Review is explained in the server log (search `Library scan: folder left in Needs Review`): the query sent to IGDB, how many candidates came back, and the best one with its score against the 0.85 threshold.
 - Under **Needs Review**, choose a suggested IGDB game or enter a different
   name in **Not listed? Search IGDB by name**. Search alone does not import the
   game; clicking a candidate confirms it and adds it to your library.

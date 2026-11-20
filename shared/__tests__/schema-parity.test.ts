@@ -34,6 +34,8 @@ const EXPECTED_TABLES = [
   "gameMilestones",
   "gamePlaySessions",
   "gameScreenshots",
+  "gameStatusEvents",
+  "gameTags",
   "games",
   "importTaskItems",
   "importTasks",
@@ -49,8 +51,11 @@ const EXPECTED_TABLES = [
   "rssFeedItems",
   "rssFeeds",
   "systemConfig",
+  "tags",
   "userSettings",
   "users",
+  "webhookDeliveries",
+  "webhookSubscriptions",
   "xrelNotifiedReleases",
 ] as const;
 
