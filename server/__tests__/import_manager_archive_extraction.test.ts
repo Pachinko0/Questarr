@@ -48,6 +48,7 @@ function makeStorage() {
     updateGameDownloadStatus: vi.fn().mockResolvedValue(undefined),
     updateGameStatus: vi.fn().mockResolvedValue(undefined),
     updateGame: vi.fn().mockResolvedValue(undefined),
+    setGameLibraryPathIfUnset: vi.fn().mockResolvedValue(undefined),
     addNotification: vi.fn().mockResolvedValue(undefined),
   };
 }

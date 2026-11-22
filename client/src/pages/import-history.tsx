@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { getSocket } from "@/lib/socket";
-import type { ImportTask, ImportTaskItem } from "@shared/schema";
+import type { GameFile, ImportTask, ImportTaskItem } from "@shared/schema";
 
 const TASK_TYPE_LABELS: Record<string, string> = {
   steam_wishlist: "Steam Wishlist",
@@ -108,7 +108,9 @@ function formatDate(ts: Date | string | number | null | undefined): string {
   return new Date(ms).toLocaleString();
 }
 
-type TaskWithItems = ImportTask & { items: ImportTaskItem[] };
+type TaskWithItems = ImportTask & {
+  items: Array<ImportTaskItem & { gameFiles?: GameFile[] }>;
+};
 
 export default function ImportHistoryPage() {
   const queryClient = useQueryClient();
@@ -251,22 +253,37 @@ export default function ImportHistoryPage() {
                 <p className="text-sm text-slate-500">No item-level detail available.</p>
               ) : (
                 <div className="space-y-1">
-                  {selectedTask.items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-start justify-between gap-3 py-2 border-b border-[#374151]/30 last:border-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm text-white truncate">
-                          {item.gameTitle ?? item.itemName}
-                        </p>
-                        {item.errorMessage && (
-                          <p className="text-xs text-red-400 mt-0.5">{item.errorMessage}</p>
-                        )}
+                  {selectedTask.items.map((item) => {
+                    const fileCount = item.gameFiles?.length ?? 0;
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-start justify-between gap-3 py-2 border-b border-[#374151]/30 last:border-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">
+                            {item.gameTitle ?? item.itemName}
+                          </p>
+                          {fileCount > 0 && (
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              {fileCount} file{fileCount !== 1 ? "s" : ""}
+                            </p>
+                          )}
+                          {item.errorMessage && (
+                            <p className="text-xs text-red-400 mt-0.5">{item.errorMessage}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {fileCount > 0 && (
+                            <Badge className="bg-blue-900/40 text-blue-400 border-blue-700/50 text-xs">
+                              {fileCount}
+                            </Badge>
+                          )}
+                          <ResultBadge result={item.result} />
+                        </div>
                       </div>
-                      <ResultBadge result={item.result} />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -19,5 +19,11 @@ importTasksRouter.get("/:id", async (req, res) => {
     return res.status(404).json({ error: "Task not found" });
   }
   const items = await storage.getImportTaskItems(task.id);
-  return res.json({ ...task, items });
+  const gameIds = [...new Set(items.map((item) => item.gameId).filter(Boolean) as string[])];
+  const filesByGameId = await storage.getGameFilesByGameIds(gameIds);
+  const enrichedItems = items.map((item) => ({
+    ...item,
+    gameFiles: item.gameId ? (filesByGameId.get(item.gameId) ?? []) : [],
+  }));
+  return res.json({ ...task, items: enrichedItems });
 });
